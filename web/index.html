@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>coder-1 — tarayıcıda kod ajanı</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230d1117'/%3E%3Ctext x='10' y='43' font-family='monospace' font-size='30' font-weight='bold' fill='%233fb950'%3E%3E_%3C/text%3E%3Ctext x='8' y='40' font-family='monospace' font-size='24' fill='%2358a6ff'%3E%26gt%3B%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+<script>var require = { paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs' } };</script>
+<script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs/loader.js"></script>
+</head>
+<body>
+<div class="app" data-tab="chat">
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-glyph">&gt;_</span>
+      <span class="brand-name">coder-1</span>
+      <span class="brand-sub">kendi eğittiğimiz kod ajanı</span>
+    </div>
+    <div class="top-status">
+      <span id="model-pill" class="pill pill-dim" title="/api/model">model: …</span>
+      <span id="run-pill" class="pill pill-run hidden"><i class="dot"></i><span id="run-status">çalışıyor</span></span>
+    </div>
+  </header>
+
+  <main class="main">
+    <!-- SOL: Sohbet -->
+    <section class="panel chat-panel" id="panel-chat" aria-label="Sohbet">
+      <div id="chat-log" class="chat-log">
+        <div class="welcome">
+          <div class="welcome-glyph">&gt;_</div>
+          <h2>coder-1</h2>
+          <p>Bir istek yaz — coder-1 kendi editöründe dosyaları açar,
+          bilgisayarında komut çalıştırır ve sonucu raporlar.</p>
+          <p class="welcome-hint">örn. “faktöriyel hesaplayan bir python dosyası yaz ve test et”</p>
+        </div>
+      </div>
+      <form id="composer" class="composer">
+        <div id="run-bar" class="run-bar hidden">
+          <span class="run-bar-info"><i class="dot"></i><span id="elapsed">0.0s</span> · <span id="step-count">0 adım</span></span>
+          <button type="button" id="btn-stop" class="btn-stop">Durdur</button>
+        </div>
+        <div class="composer-row">
+          <textarea id="input" rows="1" placeholder="coder-1'e bir görev yaz…" autocomplete="off"></textarea>
+          <button type="submit" id="btn-send" class="btn-send" title="Gönder (Enter)">➤</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- SAĞ: Dosyalar + Editör (üst) / Bilgisayar (alt) -->
+    <section class="right">
+      <div class="panel files-panel" id="panel-files" aria-label="Dosyalar ve editör">
+        <div class="panel-head">
+          <span class="panel-title">Dosyalar</span>
+          <span class="panel-head-actions">
+            <button id="btn-tree-toggle" class="icon-btn" title="Ağacı göster/gizle">☰</button>
+            <button id="btn-refresh" class="icon-btn" title="Yenile">⟳</button>
+          </span>
+        </div>
+        <div class="files-body">
+          <aside id="file-tree" class="file-tree">
+            <div class="empty-hint">görev başlatılınca dosyalar burada</div>
+          </aside>
+          <div class="editor-wrap">
+            <div id="editor" class="editor"></div>
+            <pre id="editor-fallback" class="editor-fallback hidden"></pre>
+            <div id="editor-empty" class="editor-empty">bir dosya seç</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel term-panel" id="panel-term" aria-label="Bilgisayar">
+        <div class="panel-head">
+          <span class="panel-title">Bilgisayar</span>
+          <span id="term-status" class="term-status">boşta</span>
+        </div>
+        <div id="term-log" class="term-log">
+          <div class="empty-hint">ajan komut çalıştırınca burada görünür</div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <nav class="tabbar" aria-label="Sekmeler">
+    <button class="tab active" data-tab="chat"><svg class="tab-ico" viewBox="0 0 16 16"><path d="M2 1.5h12A1.5 1.5 0 0 1 15.5 3v7A1.5 1.5 0 0 1 14 11.5H8l-4.2 3.2a.5.5 0 0 1-.8-.4v-2.8H2A1.5 1.5 0 0 1 .5 10V3A1.5 1.5 0 0 1 2 1.5z"/></svg>Sohbet</button>
+    <button class="tab" data-tab="files"><svg class="tab-ico" viewBox="0 0 16 16"><path d="M3 1h6.5L13 4.5V15H3V1zm6 .5V5h3.5L9 1.5z"/></svg>Dosyalar</button>
+    <button class="tab" data-tab="term"><svg class="tab-ico" viewBox="0 0 16 16"><path d="M1.5 2h13A1.5 1.5 0 0 1 16 3.5v8a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 0 11.5v-8A1.5 1.5 0 0 1 1.5 2zm2.4 3l2 2.5-2 2.5 1.1.9 3-3.4-3-3.4-1.1.9zm4.4 4.5h4.2v1.2H8.3V9.5z"/></svg>Ekran</button>
+  </nav>
+</div>
+<script type="module" src="app.js"></script>
+</body>
+</html>
