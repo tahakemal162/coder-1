@@ -43,11 +43,49 @@ def healthz():
     return {"ok": True, "model": "coder-1", "params": MODEL.cfg.n_params() if MODEL else 0}
 
 
+def _context_len():
+    return MODEL.cfg.max_seq_len if MODEL else 2048
+
+
+def _fit_ids(messages):
+    """Prompt'u modelin bağlam penceresine sığdır.
+
+    1) En eski (system dışı) mesajları düşürerek yeniden render et.
+    2) Hâlâ sığmıyorsa token düzeyinde kırp: baş %25 (system kalır) +
+       son %75 (üretim promptu `<|im_start|>assistant\\n` sonda kalır).
+    Dönen: (ids, ctx_meta)
+    """
+    budget = _context_len()
+    sys_msg = {"role": "system", "content": SYSTEM_CODER}
+    raw = [m if isinstance(m, dict) else m.dict() for m in messages]
+    dropped = 0
+
+    msgs = [sys_msg] + raw
+    ids = TOK.encode(render_chat(msgs))
+    while len(ids) > budget and raw:
+        raw.pop(0)
+        dropped += 1
+        msgs = [sys_msg] + raw
+        ids = TOK.encode(render_chat(msgs))
+
+    truncated = False
+    if len(ids) > budget:
+        # tek mesaj bile sığmıyor → baş+sonu tut (sonda <|im_start|>assistant var)
+        head = max(1, budget // 4)
+        tail = budget - head
+        ids = ids[:head] + ids[-tail:]
+        truncated = True
+
+    return torch.tensor([ids], device=DEVICE), {
+        "prompt_tokens": len(ids), "ctx": budget,
+        "dropped_messages": dropped, "truncated": truncated}
+
+
 def _gen_ids(messages, temperature, top_p, max_tokens):
-    msgs = [{"role": "system", "content": SYSTEM_CODER}] + [
-        m if isinstance(m, dict) else m.dict() for m in messages]
-    prompt = render_chat(msgs)
-    ids = torch.tensor([TOK.encode(prompt)], device=DEVICE)
+    ids, meta = _fit_ids(messages)
+    room = _context_len() - ids.size(1)
+    if room < 1:
+        return [], meta            # prompt pencereyi doldurdu
     sampler = make_sampler(temperature=temperature, top_p=top_p,
                            seen=set(ids[0].tolist()))
     acc = []
@@ -55,19 +93,17 @@ def _gen_ids(messages, temperature, top_p, max_tokens):
     def cb(tid):
         acc.append(tid)
 
-    MODEL.generate_ids(ids, max_tokens, sampler,
+    MODEL.generate_ids(ids, min(max_tokens, room), sampler,
                        eos_id=TOK.special.get("<|im_end|>"), on_token=cb)
-    return acc
+    return acc, meta
 
 
 @app.post("/v1/chat/completions")
 def chat(req: ChatReq):
     if req.stream:
         def stream():
-            msgs = [{"role": "system", "content": SYSTEM_CODER}] + [
-                m if isinstance(m, dict) else m.dict() for m in req.messages]
-            prompt = render_chat(msgs)
-            ids = torch.tensor([TOK.encode(prompt)], device=DEVICE)
+            ids, meta = _fit_ids(req.messages)
+            room = _context_len() - ids.size(1)
             sampler = make_sampler(temperature=req.temperature, top_p=req.top_p,
                                    seen=set(ids[0].tolist()))
             pieces = []
@@ -75,21 +111,23 @@ def chat(req: ChatReq):
             def cb(tid):
                 pieces.append(TOK.decode([tid]))
 
-            MODEL.generate_ids(ids, req.max_tokens, sampler,
+            MODEL.generate_ids(ids, min(req.max_tokens, max(room, 0)), sampler,
                                eos_id=TOK.special.get("<|im_end|>"), on_token=cb)
+            yield f"data: {json.dumps({'context':meta}, ensure_ascii=False)}\n\n"
             for p in pieces:
                 yield f"data: {json.dumps({'choices':[{'delta':{'content':p}}]}, ensure_ascii=False)}\n\n"
             yield "data: [DONE]\n\n"
 
         return StreamingResponse(stream(), media_type="text/event-stream")
 
-    acc = _gen_ids(req.messages, req.temperature, req.top_p, req.max_tokens)
+    acc, meta = _gen_ids(req.messages, req.temperature, req.top_p, req.max_tokens)
     text = TOK.decode(acc)
     return JSONResponse({
         "id": "coder1",
         "object": "chat.completion",
         "choices": [{"index": 0, "message": {"role": "assistant", "content": text},
                      "finish_reason": "stop"}],
+        "context": meta,
     })
 
 
@@ -102,14 +140,22 @@ class CompReq(BaseModel):
 
 @app.post("/v1/completions")
 def completions(req: CompReq):
-    ids = torch.tensor([TOK.encode(req.prompt)], device=DEVICE)
+    enc = TOK.encode(req.prompt)
+    budget = _context_len()
+    truncated = len(enc) > budget
+    if truncated:
+        enc = enc[-budget:]        # completions'ta sondan tut (son metin önemli)
+    ids = torch.tensor([enc], device=DEVICE)
+    room = max(0, budget - ids.size(1))
     sampler = make_sampler(temperature=req.temperature, top_p=req.top_p,
                            seen=set(ids[0].tolist()))
     acc = []
-    MODEL.generate_ids(ids, req.max_tokens, sampler,
+    MODEL.generate_ids(ids, min(req.max_tokens, room), sampler,
                        eos_id=TOK.special.get("<|im_end|>"),
                        on_token=lambda t: acc.append(t))
-    return {"choices": [{"text": TOK.decode(acc)}]}
+    return {"choices": [{"text": TOK.decode(acc)}],
+            "context": {"prompt_tokens": int(ids.size(1)), "ctx": budget,
+                        "truncated": truncated}}
 
 
 def main():
