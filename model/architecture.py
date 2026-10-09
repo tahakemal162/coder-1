@@ -24,14 +24,21 @@ class RMSNorm(nn.Module):
 class RoPE(nn.Module):
     def __init__(self, head_dim, theta, max_seq_len):
         super().__init__()
-        inv = 1.0 / (theta ** (torch.arange(0, head_dim, 2).float() / head_dim))
-        t = torch.arange(max_seq_len).float()
+        self.head_dim, self.theta = head_dim, theta
+        self._build(max_seq_len)
+
+    def _build(self, T):
+        inv = 1.0 / (self.theta ** (torch.arange(0, self.head_dim, 2).float() / self.head_dim))
+        t = torch.arange(T).float()
         freqs = torch.outer(t, inv)                      # (T, d/2)
         self.register_buffer("cos", freqs.cos(), persistent=False)
         self.register_buffer("sin", freqs.sin(), persistent=False)
 
     def forward(self, x, pos):  # x: (B, H, T, hd)
-        cos = self.cos[pos:pos + x.size(2)].to(x.dtype)  # (T, d/2)
+        need = pos + x.size(2)
+        if need > self.cos.size(0):
+            self._build(need + 512)                      # eğitim penceresini aşan üretim: uzat
+        cos = self.cos[pos:pos + x.size(2)].to(x.dtype)
         sin = self.sin[pos:pos + x.size(2)].to(x.dtype)
         x1, x2 = x[..., ::2], x[..., 1::2]
         o = torch.stack([-x2, x1], dim=-1).flatten(-2)   # rotate_half
