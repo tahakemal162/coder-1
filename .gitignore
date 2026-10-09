@@ -1,0 +1,10 @@
+__pycache__/
+*.pt
+*.bin
+runs/
+data/shards/
+data/raw/
+work/
+*.egg-info/
+.venv/
+node_modules/
