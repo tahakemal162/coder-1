@@ -1,0 +1,62 @@
+{"src": "github", "repo": "psf/requests", "files": 38, "bytes": 398349, "sec": 0.4}
+{"src": "github", "repo": "pallets/flask", "files": 104, "bytes": 553157, "sec": 0.3}
+{"src": "github", "repo": "encode/httpx", "files": 48, "bytes": 350315, "sec": 0.6}
+{"src": "github", "repo": "python/cpython", "files": 282, "bytes": 1329560, "sec": 5.5}
+{"src": "github", "repo": "pypa/pip", "files": 291, "bytes": 2927842, "sec": 1.0}
+{"src": "github", "repo": "django/django", "files": 288, "bytes": 858435, "sec": 1.5}
+{"src": "github", "repo": "numpy/numpy", "files": 285, "bytes": 2489937, "sec": 2.0}
+{"src": "github", "repo": "pandas-dev/pandas", "files": 286, "bytes": 6831599, "sec": 1.2}
+{"src": "github", "repo": "scikit-learn/scikit-learn", "files": 292, "bytes": 1863063, "sec": 1.1}
+{"src": "github", "repo": "pallets/jinja", "files": 63, "bytes": 713838, "sec": 0.2}
+{"src": "github", "repo": "pallets/click", "files": 90, "bytes": 966804, "sec": 0.3}
+{"src": "github", "repo": "encode/starlette", "files": 75, "bytes": 537874, "sec": 0.4}
+{"src": "github", "repo": "tiangolo/fastapi", "files": 299, "bytes": 175611, "sec": 2.0}
+{"src": "github", "repo": "encode/uvicorn", "files": 81, "bytes": 442953, "sec": 0.2}
+{"src": "github", "repo": "celery/celery", "files": 293, "bytes": 1983732, "sec": 0.5}
+{"src": "github", "repo": "psycopg/psycopg2", "files": 128, "bytes": 1092078, "sec": 0.6}
+{"src": "github", "repo": "pygments/pygments", "files": 280, "bytes": 3555662, "sec": 1.6}
+{"src": "github", "repo": "pallets/werkzeug", "files": 189, "bytes": 1243808, "sec": 0.3}
+{"src": "github", "repo": "benoitc/gunicorn", "files": 290, "bytes": 1726777, "sec": 0.6}
+{"src": "github", "repo": "mitmproxy/mitmproxy", "files": 284, "bytes": 1414518, "sec": 2.1}
+{"src": "github", "repo": "aio-libs/aiohttp", "files": 142, "bytes": 1970318, "sec": 0.6}
+{"src": "github", "repo": "tornadoweb/tornado", "files": 141, "bytes": 1879090, "sec": 0.6}
+{"src": "github", "repo": "getsentry/sentry-python", "files": 275, "bytes": 2251552, "sec": 0.7}
+{"src": "github", "repo": "pytest-dev/pytest", "files": 247, "bytes": 2639429, "sec": 0.4}
+{"src": "github", "repo": "python-pillow/Pillow", "files": 285, "bytes": 2340522, "sec": 3.2}
+{"src": "github", "repo": "matplotlib/matplotlib", "files": 261, "bytes": 1428853, "sec": 2.7}
+{"src": "github", "repo": "sympy/sympy", "files": 284, "bytes": 4277301, "sec": 1.6}
+{"src": "github", "repo": "ipython/ipython", "files": 288, "bytes": 2922675, "sec": 0.5}
+{"src": "github", "repo": "jupyter/notebook", "files": 118, "bytes": 312178, "sec": 0.5}
+{"src": "github", "repo": "keras-team/keras", "files": 149, "bytes": 1518550, "sec": 0.8}
+{"src": "github", "repo": "facebookresearch/llama", "files": 8, "bytes": 47860, "sec": 0.2}
+{"src": "github", "repo": "unslothai/unsloth", "files": 297, "bytes": 5423836, "sec": 5.5}
+{"src": "github", "repo": "huggingface/transformers", "files": 277, "bytes": 5138337, "sec": 3.2}
+{"src": "github", "repo": "huggingface/peft", "files": 293, "bytes": 3117236, "sec": 1.1}
+{"src": "github", "repo": "triton-lang/triton", "files": 296, "bytes": 4361753, "sec": 1.2}
+{"src": "github", "repo": "ggerganov/llama.cpp", "files": 295, "bytes": 3711853, "sec": 5.7}
+{"src": "github", "repo": "vllm-project/vllm", "files": 291, "bytes": 3256541, "sec": 4.2}
+{"src": "github", "repo": "nodejs/node", "files": 298, "bytes": 631425, "sec": 19.9}
+{"src": "github", "repo": "expressjs/express", "files": 107, "bytes": 187216, "sec": 0.5}
+{"src": "github", "repo": "axios/axios", "files": 167, "bytes": 397837, "sec": 0.3}
+{"src": "github", "repo": "lodash/lodash", "files": 52, "bytes": 632620, "sec": 0.3}
+{"src": "github", "repo": "vuejs/core", "files": 223, "bytes": 1408746, "sec": 0.4}
+{"src": "github", "repo": "sveltejs/svelte", "files": 293, "bytes": 1378699, "sec": 0.6}
+{"src": "github", "repo": "webpack/webpack", "files": 297, "bytes": 133951, "sec": 2.1}
+{"src": "github", "repo": "babel/babel", "files": 295, "bytes": 282826, "sec": 1.6}
+{"src": "github", "repo": "microsoft/TypeScript", "files": 200, "bytes": 2068126, "sec": 4.6}
+{"src": "github", "repo": "golang/go", "files": 290, "bytes": 1598586, "sec": 5.5}
+{"src": "github", "repo": "rust-lang/rust", "files": 291, "bytes": 4208421, "sec": 5.6}
+{"src": "github", "repo": "torvalds/linux", "files": 291, "bytes": 1460128, "sec": 43.0}
+{"src": "github", "repo": "redis/redis", "files": 0, "bytes": 0, "sec": 0.4, "err": "no_files_yielded (download failed or empty)"}
+{"src": "github", "repo": "git/git", "files": 300, "bytes": 4496566, "sec": 2.9}
+{"src": "github", "repo": "neovim/neovim", "files": 297, "bytes": 5663647, "sec": 2.8}
+{"src": "github", "repo": "tmux/tmux", "files": 287, "bytes": 1904481, "sec": 0.7}
+{"src": "github", "repo": "curl/curl", "files": 295, "bytes": 1990205, "sec": 1.1}
+{"src": "github", "repo": "nginx/nginx", "files": 191, "bytes": 1532011, "sec": 0.7}
+{"src": "github", "repo": "postgres/postgres", "files": 260, "bytes": 1452581, "sec": 4.7}
+{"src": "github", "repo": "sqlite/sqlite", "files": 290, "bytes": 6288596, "sec": 4.2}
+{"src": "code_search_net", "lang": "python", "funcs": 111244, "bytes": 131008476, "sec": 18.1}
+{"src": "code_search_net", "lang": "python", "funcs": 26012, "bytes": 33565854, "sec": 6.6, "rebalanced": true}
+{"src": "code_search_net", "lang": "javascript", "funcs": 34420, "bytes": 33566070, "sec": 7.9, "rebalanced": true}
+{"src": "code_search_net", "lang": "go", "funcs": 50825, "bytes": 33565948, "sec": 9.6, "rebalanced": true}
+{"src": "code_search_net", "lang": "java", "funcs": 45939, "bytes": 33565852, "sec": 8.4, "rebalanced": true}

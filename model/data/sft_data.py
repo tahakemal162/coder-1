@@ -12,39 +12,54 @@ import json
 import random
 
 
+def _csn_rows(lang):
+    """code_search_net satırları akıt: (docstring, code) çiftleri.
+    HF `code_search_net` datasets>=3 ile yüklenemez (script dataset); aynı
+    kayıtları taşıyan Nan-Do/code-search-net-{lang} aynasına düş."""
+    from datasets import load_dataset
+    try:
+        ds = load_dataset("code_search_net", lang, split="train",
+                          streaming=True)
+        for row in ds:
+            yield (row.get("func_documentation_string") or "").strip(), \
+                  (row.get("func_code_string") or "").strip()
+        return
+    except Exception:
+        pass
+    ds = load_dataset(f"Nan-Do/code-search-net-{lang}", split="train",
+                      streaming=True)
+    for row in ds:
+        yield (row.get("docstring") or "").strip(), \
+              (row.get("code") or "").strip()
+
+
 def build_csn(out_path, per_lang=4000):
     """code_search_net: function + docstring çiftleri → SFT satırları."""
-    from datasets import load_dataset
     n = 0
     with open(out_path, "w") as f:
         for lang in ("python", "javascript", "go", "java"):
-            try:
-                ds = load_dataset("code_search_net", lang, split="train",
-                                  streaming=True)
-            except Exception as e:
-                print(f"{lang} atlandı: {e}")
-                continue
             cnt = 0
-            for row in ds:
-                doc = (row.get("func_documentation_string") or "").strip()
-                code = (row.get("func_code_string") or "").strip()
-                if not doc or not code or len(doc) < 30 or len(code) < 40:
-                    continue
-                user = random.choice([
-                    "Şu işi yapan bir fonksiyon yaz:\n\n",
-                    "Aşağıdaki işlevi kodla:\n\n",
-                    "Write a function that:\n\n",
-                    "Implement:\n\n",
-                ]) + doc
-                asst = f"```{'python' if lang == 'python' else lang}\n{code}\n```"
-                f.write(json.dumps({"messages": [
-                    {"role": "user", "content": user},
-                    {"role": "assistant", "content": asst},
-                ]}, ensure_ascii=False) + "\n")
-                cnt += 1
-                n += 1
-                if cnt >= per_lang:
-                    break
+            try:
+                for doc, code in _csn_rows(lang):
+                    if not doc or not code or len(doc) < 30 or len(code) < 40:
+                        continue
+                    user = random.choice([
+                        "Şu işi yapan bir fonksiyon yaz:\n\n",
+                        "Aşağıdaki işlevi kodla:\n\n",
+                        "Write a function that:\n\n",
+                        "Implement:\n\n",
+                    ]) + doc
+                    asst = f"```{'python' if lang == 'python' else lang}\n{code}\n```"
+                    f.write(json.dumps({"messages": [
+                        {"role": "user", "content": user},
+                        {"role": "assistant", "content": asst},
+                    ]}, ensure_ascii=False) + "\n")
+                    cnt += 1
+                    n += 1
+                    if cnt >= per_lang:
+                        break
+            except Exception as e:
+                print(f"{lang} yarıda kesildi: {e}")
             print(f"{lang}: {cnt} satır")
     print(f"toplam {n} -> {out_path}")
 
