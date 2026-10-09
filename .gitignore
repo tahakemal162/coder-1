@@ -8,3 +8,6 @@ work/
 *.egg-info/
 .venv/
 node_modules/
+deploy/artifacts/
+__pycache__/
+*.pyc
