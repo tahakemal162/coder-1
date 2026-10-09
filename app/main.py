@@ -11,14 +11,14 @@ Env:
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import serve.server as srv
 import agent.main as agent_mod
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-_here = os.path.dirname(os.path.abspath(__file__))
+_here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CKPT = os.environ.get("C1_CKPT", os.path.join(_here, "deploy", "artifacts"))
 TOKD = os.environ.get("C1_TOK", os.path.join(CKPT, "tok"))
 
