@@ -2,34 +2,47 @@
 
   POST /api/task            {text} -> {task_id}
   GET  /api/task/{id}       durum + olaylar (polling, ?after=n)
+  GET  /api/task/{id}/stream  aynı olay akışı, SSE (frontend ikisinden birini seçer)
+  POST /api/task/{id}/stop  çalışan görevi iptal et ({"t":"stop"} + done)
+  GET  /api/tasks           tüm görevler (id, status, created, n_events)
   GET  /api/task/{id}/files çalışma alanı dosya listesi
   GET  /api/task/{id}/file?path=  dosya içeriği (editör)
+  GET  /api/task/{id}/diff  workspace vs orijinal unified diff
+  GET  /api/task/{id}/screen  görev bilgisayarının ekranı (JPEG; ekran yoksa 404)
   GET  /api/model           model bilgisi
 
-v0: model servisi (serve/server.py) ayrı süreç; agent loop thread'de çalışır.
+v1: görevler Docker sandbox'ında koşar (varsa), host'a düşülür; boşta >1 saat
+kalan çalışma alanları archive/ altına taşınır (CODER1_IDLE_S ile ayarlanır).
+Sözleşme: aynı endpoint isimleri + aynı olay tipleri, sadece ekleme.
 """
+import json
 import os
 import sys
 import threading
+import time
 import uuid
+from contextlib import asynccontextmanager
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
+from agent.computer import docker_status, start_sandbox, cleanup_stale_containers
 from agent.loop import agent_task
 from agent.workspace import Workspace
 
-app = FastAPI(title="coder-1 backend")
-app.add_middleware(CORSMiddleware, allow_origins=["*"],
-                   allow_methods=["*"], allow_headers=["*"])
-
 MODEL_URL = os.environ.get("CODER1_MODEL_URL", "http://localhost:9100")
-WORK_ROOT = os.environ.get("CODER1_WORK", os.path.expanduser("~/coder1_work"))
+WORK_ROOT = os.path.abspath(os.environ.get("CODER1_WORK",
+                                          os.path.expanduser("~/coder1_work")))
+ARCHIVE_DIR = os.path.join(WORK_ROOT, "archive")
+IDLE_S = float(os.environ.get("CODER1_IDLE_S", "3600"))
+SWEEP_S = float(os.environ.get("CODER1_SWEEP_S", "600"))
+USE_DOCKER = os.environ.get("CODER1_NO_DOCKER", "") != "1"
 
-TASKS = {}  # id -> {status, events, result, workdir}
+TASKS = {}      # id -> {status, events, result, workdir, cancel, ...}
 
 
 class TaskReq(BaseModel):
@@ -38,24 +51,96 @@ class TaskReq(BaseModel):
 
 def _run(tid, text, workdir):
     T = TASKS[tid]
+    sb, kind, why = start_sandbox(workdir, tid, prefer_docker=USE_DOCKER)
+    T["sandbox"] = sb
+    T["sandbox_kind"] = kind
+    if why:
+        T["events"].append({"t": "sandbox", "kind": kind, "note": why})
+
     def on_event(ev):
         T["events"].append(ev)
+        T["last_activity"] = time.time()
+
     try:
-        res = agent_task(MODEL_URL, text, workdir, on_event=on_event)
+        res = agent_task(MODEL_URL, text, workdir, on_event=on_event,
+                         cancel=T["cancel"], sandbox=sb)
         T["result"] = res
-        T["status"] = "done" if res.get("ok") else "failed"
+        if res.get("stopped"):
+            T["status"] = "stopped"
+        else:
+            T["status"] = "done" if res.get("ok") else "failed"
     except Exception as e:
         T["status"] = "error"
         T["events"].append({"t": "error", "text": str(e)[:500]})
+    finally:
+        T["last_activity"] = time.time()
+        try:
+            sb.close()
+        except Exception:
+            pass
+        T["sandbox"] = None       # görev bitti; ekran artık yok (404 dürüst)
+
+
+def _archive_idle_workdirs():
+    """Boşta kalan çalışma alanlarını WORK_ROOT/archive/<tid>'ye taşır."""
+    while True:
+        time.sleep(SWEEP_S)
+        now = time.time()
+        for tid, T in list(TASKS.items()):
+            if T["status"] == "running":
+                continue
+            if now - T.get("last_activity", T["created"]) <= IDLE_S:
+                continue
+            src = T["workdir"]
+            dst = os.path.join(ARCHIVE_DIR, tid)
+            try:
+                os.makedirs(ARCHIVE_DIR, exist_ok=True)
+                os.replace(src, dst)          # dizin adı archive'e taşınır
+                T["workdir"] = dst
+                T["archived"] = True
+            except OSError:
+                pass
+        # TASKS kaydı olmayan sahipsiz dizinler de aynı kurala girer
+        try:
+            for name in os.listdir(WORK_ROOT):
+                p = os.path.join(WORK_ROOT, name)
+                if (not os.path.isdir(p) or name == "archive"
+                        or name in TASKS):
+                    continue
+                if now - os.path.getmtime(p) > IDLE_S:
+                    os.makedirs(ARCHIVE_DIR, exist_ok=True)
+                    os.replace(p, os.path.join(ARCHIVE_DIR, name))
+        except OSError:
+            pass
+
+
+@asynccontextmanager
+async def _lifespan(app):
+    os.makedirs(WORK_ROOT, exist_ok=True)
+    os.makedirs(ARCHIVE_DIR, exist_ok=True)
+    cleanup_stale_containers()
+    t = threading.Thread(target=_archive_idle_workdirs, daemon=True)
+    t.start()
+    yield
+
+
+app = FastAPI(title="coder-1 backend", lifespan=_lifespan)
+app.add_middleware(CORSMiddleware, allow_origins=["*"],
+                   allow_methods=["*"], allow_headers=["*"])
 
 
 @app.post("/api/task")
 def new_task(req: TaskReq):
     tid = uuid.uuid4().hex[:10]
     workdir = os.path.join(WORK_ROOT, tid)
+    now = time.time()
     TASKS[tid] = {"status": "running", "events": [], "result": None,
-                  "workdir": workdir}
-    threading.Thread(target=_run, args=(tid, req.text, workdir), daemon=True).start()
+                  "workdir": workdir, "cancel": threading.Event(),
+                  "created": now, "last_activity": now,
+                  "text": req.text[:200], "archived": False,
+                  "sandbox": None, "sandbox_kind": None}
+    threading.Thread(target=_run, args=(tid, req.text, workdir),
+                     daemon=True).start()
     return {"task_id": tid}
 
 
@@ -65,7 +150,59 @@ def get_task(tid: str, after: int = 0):
     if not T:
         return {"error": "yok"}
     return {"status": T["status"], "events": T["events"][after:],
-            "n_events": len(T["events"]), "result": T.get("result")}
+            "n_events": len(T["events"]), "result": T.get("result"),
+            "sandbox": T.get("sandbox_kind"), "archived": T.get("archived", False)}
+
+
+@app.get("/api/task/{tid}/stream")
+def stream_task(tid: str):
+    """SSE: polling kontratıyla aynı olay nesnelerini akar."""
+    T = TASKS.get(tid)
+    if not T:
+        return JSONResponse({"error": "yok"}, status_code=404)
+
+    def gen():
+        sent = 0
+        yield f"data: {json.dumps({'t':'meta','task_id':tid,'status':T['status']}, ensure_ascii=False)}\n\n"
+        while True:
+            evs = T["events"][sent:]
+            for ev in evs:
+                yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+            sent += len(evs)
+            if T["status"] != "running" and not T["events"][sent:]:
+                yield f"data: {json.dumps({'t':'eos','status':T['status']}, ensure_ascii=False)}\n\n"
+                return
+            time.sleep(0.4)
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no"})
+
+
+@app.post("/api/task/{tid}/stop")
+def stop_task(tid: str):
+    T = TASKS.get(tid)
+    if not T:
+        return {"error": "yok"}
+    if T["status"] != "running":
+        return {"ok": False, "status": T["status"]}
+    T["cancel"].set()
+    T["events"].append({"t": "stop_requested"})
+    return {"ok": True, "status": "stopping"}
+
+
+@app.get("/api/tasks")
+def list_tasks():
+    out = []
+    for tid, T in sorted(TASKS.items(), key=lambda kv: kv[1]["created"],
+                         reverse=True):
+        out.append({"task_id": tid, "status": T["status"],
+                    "created": T["created"],
+                    "last_activity": T["last_activity"],
+                    "n_events": len(T["events"]),
+                    "text": T["text"], "archived": T.get("archived", False),
+                    "sandbox": T.get("sandbox_kind")})
+    return {"tasks": out}
 
 
 @app.get("/api/task/{tid}/files")
@@ -87,12 +224,42 @@ def file(tid: str, path: str):
         return {"error": str(e)}
 
 
+@app.get("/api/task/{tid}/diff")
+def task_diff(tid: str):
+    T = TASKS.get(tid)
+    if not T:
+        return {"error": "yok"}
+    try:
+        return {"task_id": tid, "diff": Workspace(T["workdir"]).diff()}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/task/{tid}/screen")
+def task_screen(tid: str):
+    """Görev bilgisayarının gerçek ekranı — X görüntüsü yoksa 404."""
+    T = TASKS.get(tid)
+    if not T:
+        return JSONResponse({"error": "yok"}, status_code=404)
+    sb = T.get("sandbox")
+    if sb is None:
+        return JSONResponse({"error": "ekran yok — görev çalışmıyor"},
+                            status_code=404)
+    jpg = sb.screenshot()
+    if not jpg:
+        return JSONResponse({"error": "ekran yok — sandbox'ta display yok"},
+                            status_code=404)
+    return Response(content=jpg, media_type="image/jpeg")
+
+
 @app.get("/api/model")
 def model_info():
-    import urllib.request, json
+    import urllib.request
     try:
         r = urllib.request.urlopen(MODEL_URL.rstrip("/") + "/healthz", timeout=5)
-        return json.loads(r.read())
+        out = json.loads(r.read())
+        out["docker"] = docker_status()
+        return out
     except Exception as e:
         return {"ok": False, "err": str(e), "model_url": MODEL_URL}
 
