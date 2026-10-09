@@ -14,7 +14,9 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import serve.server as srv
-from agent.main import app  # /api/* + lifespan
+import agent.main as agent_mod
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 _here = os.path.dirname(os.path.abspath(__file__))
 CKPT = os.environ.get("C1_CKPT", os.path.join(_here, "deploy", "artifacts"))
@@ -24,7 +26,14 @@ srv.TOK = srv.BPE.load(TOKD)
 srv.MODEL = srv.CoderModel.load(CKPT, device=srv.DEVICE)
 srv.MODEL.eval()
 
-# /api/* önce eşleşir; geri kalan (/v1/*, /healthz) model app'ine düşer.
+app = FastAPI(title="coder-1", lifespan=agent_mod._lifespan)
+app.add_middleware(CORSMiddleware, allow_origins=["*"],
+                   allow_methods=["*"], allow_headers=["*"])
+
+# ajan backend route'ları (/api/*)
+for r in agent_mod.app.routes:
+    app.router.routes.append(r)
+# geri kalan (/v1/*, /healthz) model app'ine düşer
 app.mount("/", srv.app)
 
 if __name__ == "__main__":
