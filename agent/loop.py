@@ -16,6 +16,7 @@ v1 (production hardening):
 - Çalışma alanı agent.computer sandbox'ına devredilebilir (Docker).
 """
 import json
+import os
 import re
 import threading
 import time
@@ -50,8 +51,12 @@ def call_model(base_url, messages, max_tokens=1024, temperature=0.4):
         "messages": messages, "temperature": temperature,
         "max_tokens": max_tokens, "stream": False,
     }).encode()
+    headers = {"Content-Type": "application/json"}
+    itok = os.environ.get("CODER1_INTERNAL_TOKEN")
+    if itok:
+        headers["Authorization"] = "Bearer " + itok
     req = urllib.request.Request(base_url.rstrip("/") + "/v1/chat/completions",
-                                 data=body, headers={"Content-Type": "application/json"})
+                                 data=body, headers=headers)
     r = urllib.request.urlopen(req, timeout=600)
     return json.loads(r.read())["choices"][0]["message"]["content"]
 

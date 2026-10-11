@@ -28,22 +28,41 @@ def api(method, path, body=None):
 
 
 def deploy(backend_url):
+    import base64
     files = []
     for dp, _, fns in os.walk(WEB):
         for fn in fns:
             p = os.path.join(dp, fn)
             rel = os.path.relpath(p, WEB).replace(os.sep, "/")
-            files.append({"file": rel, "data": open(p).read()})
+            raw = open(p, "rb").read()
+            try:
+                files.append({"file": rel, "data": raw.decode()})
+            except UnicodeDecodeError:
+                files.append({"file": rel, "data": base64.b64encode(raw).decode(),
+                              "encoding": "base64"})
     cfg = {
-        "version": 2, "name": NAME, "public": True,
+        "name": NAME,
         "rewrites": [{"source": "/api/(.*)", "destination": backend_url.rstrip("/") + "/api/$1"}],
     }
-    body = {"name": NAME, "files": [{"file": f["file"], "data": f["data"]}
-                                    for f in files],
-            "projectSettings": {"framework": None},
+    body = {"name": NAME, "files": files,
+            "projectSettings": {"framework": None}, "target": "production",
             **cfg}
     r = api("POST", "/v13/deployments?forceNew=1", body)
     print("deploy:", r.get("url") or r)
+    import time
+    for _ in range(40):  # alias için READY olmasını bekle (~2 dk)
+        st = api("GET", f"/v13/deployments/{r['id']}").get("readyState") if r.get("id") else "ERROR"
+        if st in ("READY", "ERROR", "CANCELED"):
+            break
+        time.sleep(3)
+    for alias in os.environ.get("C1_ALIASES", "coder-1-rosy.vercel.app").split(","):
+        alias = alias.strip()
+        if alias and r.get("id"):
+            try:
+                api("POST", f"/v2/deployments/{r['id']}/aliases", {"alias": alias})
+                print("alias:", alias)
+            except RuntimeError as e:
+                print("alias HATA:", e)
     return r
 
 

@@ -32,6 +32,8 @@ from pydantic import BaseModel
 
 from agent.computer import docker_status, start_sandbox, cleanup_stale_containers
 from agent.loop import agent_task
+from agent import brain as _brain
+from agent.loop2 import agent_task2
 from agent.workspace import Workspace
 
 MODEL_URL = os.environ.get("CODER1_MODEL_URL", "http://localhost:9100")
@@ -47,9 +49,37 @@ TASKS = {}      # id -> {status, events, result, workdir, cancel, ...}
 
 class TaskReq(BaseModel):
     text: str
+    name: str = ""
+    answers: dict | None = None
 
 
-def _run(tid, text, workdir):
+PREFS_DIR = os.path.join(WORK_ROOT, "prefs")
+USE_BRAIN = os.environ.get("C1_BRAIN", "ollama") == "ollama"
+
+
+def _prefs_path(name):
+    safe = "".join(ch for ch in (name or "anon") if ch.isalnum() or ch in "-_")[:40] or "anon"
+    return os.path.join(PREFS_DIR, safe + ".json")
+
+
+def _load_prefs(name):
+    try:
+        with open(_prefs_path(name)) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_prefs(name, prefs):
+    try:
+        os.makedirs(PREFS_DIR, exist_ok=True)
+        with open(_prefs_path(name), "w") as f:
+            json.dump(prefs, f, ensure_ascii=False)
+    except OSError:
+        pass
+
+
+def _run(tid, text, workdir, answers=None):
     T = TASKS[tid]
     sb, kind, why = start_sandbox(workdir, tid, prefer_docker=USE_DOCKER)
     T["sandbox"] = sb
@@ -62,11 +92,22 @@ def _run(tid, text, workdir):
         T["last_activity"] = time.time()
 
     try:
-        res = agent_task(MODEL_URL, text, workdir, on_event=on_event,
-                         cancel=T["cancel"], sandbox=sb)
+        if USE_BRAIN and _brain.available():
+            res = agent_task2(text, workdir, on_event=on_event, cancel=T["cancel"],
+                              sandbox=sb, history=T.get("history"),
+                              prefs=_load_prefs(T.get("user")), answers=answers,
+                              user=T.get("user", ""))
+            T["history"] = res.get("history") or T.get("history") or []
+            if res.get("prefs"):
+                _save_prefs(T.get("user"), res["prefs"])
+        else:
+            res = agent_task(MODEL_URL, text, workdir, on_event=on_event,
+                             cancel=T["cancel"], sandbox=sb)
         T["result"] = res
         if res.get("stopped"):
             T["status"] = "stopped"
+        elif res.get("waiting"):
+            T["status"] = "waiting"
         else:
             T["status"] = "done" if res.get("ok") else "failed"
     except Exception as e:
@@ -138,10 +179,29 @@ def new_task(req: TaskReq):
                   "workdir": workdir, "cancel": threading.Event(),
                   "created": now, "last_activity": now,
                   "text": req.text[:200], "archived": False,
-                  "sandbox": None, "sandbox_kind": None}
-    threading.Thread(target=_run, args=(tid, req.text, workdir),
+                  "sandbox": None, "sandbox_kind": None,
+                  "user": req.name[:40], "history": []}
+    threading.Thread(target=_run, args=(tid, req.text, workdir, req.answers),
                      daemon=True).start()
     return {"task_id": tid}
+
+
+@app.post("/api/task/{tid}/reply")
+def reply_task(tid: str, req: TaskReq):
+    """Soru sorulan ya da biten göreve aynı çalışma alanında devam et."""
+    T = TASKS.get(tid)
+    if not T:
+        return JSONResponse({"error": "yok"}, status_code=404)
+    if T["status"] == "running":
+        return JSONResponse({"error": "görev hâlâ çalışıyor"}, status_code=409)
+    T["status"] = "running"
+    T["cancel"] = threading.Event()
+    T["last_activity"] = time.time()
+    if req.name:
+        T["user"] = req.name[:40]
+    threading.Thread(target=_run, args=(tid, req.text, T["workdir"], req.answers),
+                     daemon=True).start()
+    return {"task_id": tid, "n_events": len(T["events"])}
 
 
 @app.get("/api/task/{tid}")
@@ -213,6 +273,22 @@ def files(tid: str):
     return {"files": Workspace(T["workdir"]).list_files()}
 
 
+from fastapi.responses import FileResponse
+
+
+@app.get("/api/task/{tid}/raw")
+def raw_file(tid: str, path: str):
+    """önizleme: üretilen dosyayı ham içerikle servisler (iframe/HTML için)."""
+    T = TASKS.get(tid)
+    if not T:
+        return {"error": "yok"}
+    try:
+        ws = Workspace(T["workdir"])
+        return FileResponse(ws._abs(path))
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @app.get("/api/task/{tid}/file")
 def file(tid: str, path: str):
     T = TASKS.get(tid)
@@ -259,6 +335,9 @@ def model_info():
         r = urllib.request.urlopen(MODEL_URL.rstrip("/") + "/healthz", timeout=5)
         out = json.loads(r.read())
         out["docker"] = docker_status()
+        if USE_BRAIN and _brain.available():
+            out["brain"] = _brain.BRAIN_MODEL
+            out["model"] = "coder-1"
         return out
     except Exception as e:
         return {"ok": False, "err": str(e), "model_url": MODEL_URL}

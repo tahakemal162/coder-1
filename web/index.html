@@ -4,88 +4,133 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark">
-<title>coder-1 — tarayıcıda kod ajanı</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230d1117'/%3E%3Ctext x='10' y='43' font-family='monospace' font-size='30' font-weight='bold' fill='%233fb950'%3E%3E_%3C/text%3E%3Ctext x='8' y='40' font-family='monospace' font-size='24' fill='%2358a6ff'%3E%26gt%3B%3C/text%3E%3C/svg%3E">
+<meta name="theme-color" content="#0f1012">
+<title>coder-1</title>
+<link rel="icon" type="image/png" href="logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
 <link rel="stylesheet" href="style.css">
 <script>var require = { paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs' } };</script>
 <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs/loader.js"></script>
 </head>
 <body>
-<div class="app" data-tab="chat">
-  <header class="topbar">
-    <div class="brand">
-      <span class="brand-glyph">&gt;_</span>
-      <span class="brand-name">coder-1</span>
-      <span class="brand-sub">kendi eğittiğimiz kod ajanı</span>
+
+<div id="login" class="login hidden">
+  <div class="login-glow"></div>
+  <form id="login-form" class="login-card" autocomplete="on">
+    <img class="login-logo" src="logo.png" alt="coder-1">
+    <h1 class="login-title">coder-1'e hoş geldin</h1>
+    <p class="login-sub">Kendi eğittiğimiz kod yapay zekâsı. Devam etmek için giriş yap.</p>
+    <label class="field"><span>Kullanıcı adı</span><input id="login-name" type="text" autocomplete="username" required></label>
+    <label class="field"><span>Parola</span><input id="login-pass" type="password" autocomplete="current-password" required></label>
+    <button type="submit" id="login-btn" class="btn-primary">Giriş yap</button>
+    <div id="login-err" class="login-err hidden">yanlış parola</div>
+    <div class="login-switch"><span id="login-q">Hesabın yok mu?</span> <a id="login-mode">Kayıt ol</a></div>
+  </form>
+</div>
+
+<div class="app" data-tab="chat" data-canvas="closed" data-side="closed" data-wtab="files">
+  <div id="side-scrim" class="scrim"></div>
+
+  <aside class="side" aria-label="Sohbetler">
+    <div class="side-head">
+      <img class="side-logo" src="logo.png" alt="">
+      <span class="side-brand">coder-1</span>
+      <button id="btn-side-close" class="icon-btn side-close" title="Kapat">×</button>
     </div>
-    <div class="top-status">
+    <button id="btn-new" class="btn-new">
+      <svg viewBox="0 0 16 16" width="16" height="16"><path fill="currentColor" d="M8 1.5a.75.75 0 0 1 .75.75v5h5a.75.75 0 0 1 0 1.5h-5v5a.75.75 0 0 1-1.5 0v-5h-5a.75.75 0 0 1 0-1.5h5v-5A.75.75 0 0 1 8 1.5z"/></svg>
+      Yeni sohbet
+    </button>
+    <div class="side-label">Geçmiş</div>
+    <nav id="history" class="history"><div class="empty-hint">henüz sohbet yok</div></nav>
+    <div class="side-foot">
+      <div class="user-row">
+        <span id="user-avatar" class="avatar">?</span>
+        <span id="user-name" class="user-name">—</span>
+        <button id="btn-logout" class="icon-btn" title="Çıkış">⎋</button>
+      </div>
       <span id="model-pill" class="pill pill-dim" title="/api/model">model: …</span>
-      <span id="run-pill" class="pill pill-run hidden"><i class="dot"></i><span id="run-status">çalışıyor</span></span>
     </div>
-  </header>
+  </aside>
 
-  <main class="main">
-    <!-- SOL: Sohbet -->
-    <section class="panel chat-panel" id="panel-chat" aria-label="Sohbet">
-      <div id="chat-log" class="chat-log">
-        <div class="welcome">
-          <div class="welcome-glyph">&gt;_</div>
-          <h2>coder-1</h2>
-          <p>Bir istek yaz — coder-1 kendi editöründe dosyaları açar,
-          bilgisayarında komut çalıştırır ve sonucu raporlar.</p>
-          <p class="welcome-hint">örn. “faktöriyel hesaplayan bir python dosyası yaz ve test et”</p>
+  <main class="center">
+    <header class="chat-head">
+      <button id="btn-side" class="icon-btn only-mobile" title="Sohbetler">☰</button>
+      <div class="chat-title">
+        <span id="chat-title">coder-1</span>
+        <span id="run-pill" class="pill pill-run hidden"><i class="dot"></i><span id="run-status">çalışıyor</span></span>
+      </div>
+      <button id="btn-canvas" class="btn-ghost" title="Çalışma alanını aç/kapat">
+        <svg viewBox="0 0 16 16" width="15" height="15"><path fill="currentColor" d="M2 2.5h12A1.5 1.5 0 0 1 15.5 4v8a1.5 1.5 0 0 1-1.5 1.5H2A1.5 1.5 0 0 1 .5 12V4A1.5 1.5 0 0 1 2 2.5zm7.5 1.5v8H14V4H9.5z"/></svg>
+        <span>Çalışma alanı</span>
+      </button>
+    </header>
+
+    <div id="chat-log" class="chat-log">
+      <div class="welcome">
+        <img class="welcome-logo" src="logo.png" alt="">
+        <h2>Bugün ne yapalım?</h2>
+        <p>Bir istek yaz. coder-1 anlamadığında sorar, sonra dosyaları yazar, çalıştırır ve önizlemesini gösterir.</p>
+        <div class="suggestions">
+          <button class="sugg" data-q="bana çalışan bir hesap makinesi sitesi yap ve test et"><b>Hesap makinesi</b><span>tek dosyalık site, test edilmiş</span></button>
+          <button class="sugg" data-q="mor tonlarında bir portfolyo sitesi yap, index.html dosyasına yaz"><b>Portfolyo sitesi</b><span>mor tonlar, animasyonlu</span></button>
+          <button class="sugg" data-q="faktöriyel hesaplayan bir python fonksiyonu yaz ve test et"><b>Python fonksiyonu</b><span>faktöriyel + testler</span></button>
+          <button class="sugg" data-q="basit bir yapılacaklar listesi uygulaması yap"><b>Yapılacaklar listesi</b><span>eksikse sana sorar</span></button>
         </div>
       </div>
-      <form id="composer" class="composer">
-        <div id="run-bar" class="run-bar hidden">
-          <span class="run-bar-info"><i class="dot"></i><span id="elapsed">0.0s</span> · <span id="step-count">0 adım</span></span>
-          <button type="button" id="btn-stop" class="btn-stop">Durdur</button>
-        </div>
-        <div class="composer-row">
-          <textarea id="input" rows="1" placeholder="coder-1'e bir görev yaz…" autocomplete="off"></textarea>
-          <button type="submit" id="btn-send" class="btn-send" title="Gönder (Enter)">➤</button>
-        </div>
-      </form>
-    </section>
+    </div>
 
-    <!-- SAĞ: Dosyalar + Editör (üst) / Bilgisayar (alt) -->
-    <section class="right">
-      <div class="panel files-panel" id="panel-files" aria-label="Dosyalar ve editör">
-        <div class="panel-head">
-          <span class="panel-title">Dosyalar</span>
-          <span class="panel-head-actions">
-            <button id="btn-tree-toggle" class="icon-btn" title="Ağacı göster/gizle">☰</button>
-            <button id="btn-refresh" class="icon-btn" title="Yenile">⟳</button>
-          </span>
-        </div>
-        <div class="files-body">
-          <aside id="file-tree" class="file-tree">
-            <div class="empty-hint">görev başlatılınca dosyalar burada</div>
-          </aside>
-          <div class="editor-wrap">
-            <div id="editor" class="editor"></div>
-            <pre id="editor-fallback" class="editor-fallback hidden"></pre>
-            <div id="editor-empty" class="editor-empty">bir dosya seç</div>
-          </div>
-        </div>
+    <form id="composer" class="composer">
+      <div id="run-bar" class="run-bar hidden">
+        <span class="run-bar-info"><i class="dot"></i><span id="elapsed">0.0s</span> · <span id="step-count">0 adım</span></span>
+        <button type="button" id="btn-stop" class="btn-stop">Durdur</button>
       </div>
-
-      <div class="panel term-panel" id="panel-term" aria-label="Bilgisayar">
-        <div class="panel-head">
-          <span class="panel-title">Bilgisayar</span>
-          <span id="term-status" class="term-status">boşta</span>
-        </div>
-        <div id="term-log" class="term-log">
-          <div class="empty-hint">ajan komut çalıştırınca burada görünür</div>
-        </div>
+      <div class="composer-box">
+        <textarea id="input" rows="1" placeholder="coder-1'e yaz…" autocomplete="off"></textarea>
+        <button type="submit" id="btn-send" class="btn-send" title="Gönder (Enter)">
+          <svg viewBox="0 0 16 16" width="16" height="16"><path fill="currentColor" d="M8 14a.75.75 0 0 1-.75-.75V4.56L4.28 7.53a.75.75 0 0 1-1.06-1.06l4.25-4.25a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 1 1-1.06 1.06L8.75 4.56v8.69A.75.75 0 0 1 8 14z"/></svg>
+        </button>
       </div>
-    </section>
+      <div class="composer-hint">coder-1 hata yapabilir; ürettiği kodu test eder ama sonuçları yine de kontrol et.</div>
+    </form>
   </main>
+
+  <section id="canvas" class="canvas" aria-label="Çalışma alanı">
+    <div class="canvas-head">
+      <div class="wtabs">
+        <button class="wtab active" data-wtab="files">Dosyalar</button>
+        <button class="wtab" data-wtab="preview" id="btn-preview">Önizleme</button>
+        <button class="wtab" data-wtab="term">Ekran <span id="term-status" class="term-status">boşta</span></button>
+      </div>
+      <span class="canvas-actions">
+        <button id="btn-tree-toggle" class="icon-btn" title="Dosya ağacını göster/gizle">☰</button>
+        <button id="btn-refresh" class="icon-btn" title="Yenile">⟳</button>
+        <button id="btn-canvas-close" class="icon-btn" title="Kapat">×</button>
+      </span>
+    </div>
+    <div class="canvas-body">
+      <div class="wpane wpane-files">
+        <aside id="file-tree" class="file-tree"><div class="empty-hint">görev başlayınca dosyalar burada</div></aside>
+        <div class="editor-wrap">
+          <div id="editor" class="editor"></div>
+          <pre id="editor-fallback" class="editor-fallback hidden"></pre>
+          <div id="editor-empty" class="editor-empty">bir dosya seç</div>
+        </div>
+      </div>
+      <div class="wpane wpane-preview">
+        <iframe id="preview" class="preview" sandbox="allow-scripts" title="Önizleme"></iframe>
+        <div id="preview-empty" class="editor-empty">henüz önizlenecek HTML yok</div>
+      </div>
+      <div class="wpane wpane-term">
+        <div id="term-log" class="term-log"><div class="empty-hint">ajan komut çalıştırınca burada görünür</div></div>
+      </div>
+    </div>
+  </section>
 
   <nav class="tabbar" aria-label="Sekmeler">
     <button class="tab active" data-tab="chat"><svg class="tab-ico" viewBox="0 0 16 16"><path d="M2 1.5h12A1.5 1.5 0 0 1 15.5 3v7A1.5 1.5 0 0 1 14 11.5H8l-4.2 3.2a.5.5 0 0 1-.8-.4v-2.8H2A1.5 1.5 0 0 1 .5 10V3A1.5 1.5 0 0 1 2 1.5z"/></svg>Sohbet</button>
-    <button class="tab" data-tab="files"><svg class="tab-ico" viewBox="0 0 16 16"><path d="M3 1h6.5L13 4.5V15H3V1zm6 .5V5h3.5L9 1.5z"/></svg>Dosyalar</button>
-    <button class="tab" data-tab="term"><svg class="tab-ico" viewBox="0 0 16 16"><path d="M1.5 2h13A1.5 1.5 0 0 1 16 3.5v8a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 0 11.5v-8A1.5 1.5 0 0 1 1.5 2zm2.4 3l2 2.5-2 2.5 1.1.9 3-3.4-3-3.4-1.1.9zm4.4 4.5h4.2v1.2H8.3V9.5z"/></svg>Ekran</button>
+    <button class="tab" data-tab="canvas"><svg class="tab-ico" viewBox="0 0 16 16"><path d="M3 1h6.5L13 4.5V15H3V1zm6 .5V5h3.5L9 1.5z"/></svg>Çalışma alanı</button>
   </nav>
 </div>
 <script type="module" src="app.js"></script>
