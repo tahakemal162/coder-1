@@ -53,11 +53,17 @@ def _providers():
                     "model": "nvidia/nemotron-3-super-120b-a12b:free"})
         out.append({"id": "or-ultra", "label": "Nemotron 3 Ultra 550B", "kind": "openai", "url": OR, "key": ork,
                     "model": "nvidia/nemotron-3-ultra-550b-a55b:free"})
+    GM = "https://generativelanguage.googleapis.com/v1beta/models"
     if gmk:
-        out.append({"id": "gm-lite", "label": "Gemini 3.1 Flash Lite", "kind": "gemini",
-                    "url": "https://generativelanguage.googleapis.com/v1beta/models", "key": gmk,
+        out.append({"id": "gm-lite", "label": "Gemini 3.1 Flash Lite", "kind": "gemini", "url": GM, "key": gmk,
                     "model": "gemini-3.1-flash-lite"})
+        out.append({"id": "gm-flash", "label": "Gemini Flash", "kind": "gemini", "url": GM, "key": gmk,
+                    "model": "gemini-flash-latest"})
     if ork:
+        out.append({"id": "or-gemma31", "label": "Gemma 4 31B", "kind": "openai", "url": OR, "key": ork,
+                    "model": "google/gemma-4-31b-it:free"})
+        out.append({"id": "or-gemma26", "label": "Gemma 4 26B", "kind": "openai", "url": OR, "key": ork,
+                    "model": "google/gemma-4-26b-a4b-it:free"})
         out.append({"id": "or-cohere", "label": "Cohere North Mini Code", "kind": "openai", "url": OR, "key": ork,
                     "model": "cohere/north-mini-code:free"})
     return out
@@ -93,9 +99,11 @@ def _oai_call(p, messages, max_tokens, temperature, schema, timeout):
     return txt
 
 
-def _gem_schema(sc):
+def _gem_schema(sc, in_props=False):
     if isinstance(sc, dict):
-        return {k: _gem_schema(v) for k, v in sc.items()
+        if in_props:  # property adları (ör. "title") olduğu gibi kalır
+            return {k: _gem_schema(v) for k, v in sc.items()}
+        return {k: _gem_schema(v, in_props=(k == "properties")) for k, v in sc.items()
                 if k not in ("additionalProperties", "default", "title", "$schema")}
     if isinstance(sc, list):
         return [_gem_schema(x) for x in sc]

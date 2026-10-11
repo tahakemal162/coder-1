@@ -117,6 +117,46 @@ def _strip_fence(c):
     return c.strip() + "\n"
 
 
+def _clean_file(path, c):
+    """Çit + dosya adı etiketi temizliği."""
+    c = _strip_fence(c)
+    first, _, rest = c.partition("\n")
+    if first.strip().lower() in (path.lower(), "// " + path.lower(), "/* " + path.lower() + " */", "# " + path.lower()):
+        c = rest
+    return c.strip() + "\n"
+
+
+def _sane(path, c, ws=None):
+    """Yanlış dosya türü / bozuk içerik yakalanır: neden metni döner, sorun yoksa ''."""
+    low = c.lower()
+    if len(c.strip()) < 20:
+        return "içerik boş"
+    if path.endswith(".html"):
+        return "" if ("<html" in low or "<body" in low) else "HTML yapısı yok"
+    if path.endswith(".css"):
+        if "<html" in low or "function " in low or "document." in low or "addeventlistener" in low:
+            return "CSS dosyasına HTML/JS yazılmış"
+        return ""
+    if path.endswith(".js"):
+        if "<html" in low or low.lstrip().startswith("<!doctype"):
+            return "JS dosyasına HTML yazılmış"
+        if re.match(r"^\s*(/\*[^*]*\*/\s*)?[.#:a-z][\w\-\s,.#:>\[\]=\"']*\{", c) and "function" not in low and "=>" not in low and "const " not in low and "let " not in low:
+            return "JS dosyasına CSS yazılmış"
+        if ws is not None:
+            js = _check_js([c], ws)
+            if js:
+                return "JS sözdizimi hatası: " + js[0][:200]
+    return ""
+
+
+REPAIR_SCHEMA = {
+    "type": "object",
+    "properties": {"files": {"type": "array", "items": {"type": "object", "properties": {
+        "path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}}},
+    "required": ["files"],
+}
+
+
 class _HTMLCheck(html.parser.HTMLParser):
     def __init__(self):
         super().__init__()
@@ -727,11 +767,12 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
         # ---------- 2b. düzenle ----------
         emit("phase", name="duzenle", text="mevcut projeyi düzenliyorum")
         plan = {"title": "Düzenleme: " + task_text[:70]}
-        steps = [f"{p} dosyasında isteği uygula" for p in existing[:3]]
+        existing = sorted(existing, key=lambda q: (0 if q == "index.html" else 1 if q.endswith(".html") else 2, q))[:4]
+        steps = [f"{p} dosyasında isteği uygula" for p in existing[:4]]
         for i, st in enumerate(steps):
             emit("todo", i=i, state="todo", text=st)
         written = {}
-        for i, path in enumerate(existing[:3]):
+        for i, path in enumerate(existing[:4]):
             if stopped():
                 break
             emit("todo", i=i, state="active", text=steps[i])
@@ -745,7 +786,11 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
                 "olarak bulunsun (ör. 'kutucuk' → <input type=\"checkbox\">, 'kırmızı' → gerçek kırmızı renk). "
                 "Dosyanın TAM yeni halini tek kod bloğunda ver, açıklama yazma.")}],
                 max_tokens=1800, temperature=0.2, cancel=cancel)
-            new = _code_of(txt)
+            new = _clean_file(path, _code_of(txt))
+            why = _sane(path, new, ws)
+            if why:
+                emit("tool_result", name="edit_file", out=f"{path}: modelin düzenlemesi bozuktu ({why}), dosya korundu")
+                continue
             if new.strip() and new.strip() != cur.strip():
                 ws.write(path, new)
                 written[path] = new
@@ -815,6 +860,10 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
                           if any(x["path"].endswith((".css", ".js")) for x in files) or sum(x["path"].endswith(".html") for x in files) > 1
                           else "Tüm CSS ve JS aynı dosyada olsun.")) if path.endswith(".html") else "")
                    + (" Bu dosya diğer sayfaların kullandığı ortak dosya; HTML'deki sınıf/id adlarıyla birebir uyumlu olsun." if path.endswith((".css", ".js")) else "")
+                   + ((" Tasarım profesyonel bir ajans işi gibi olsun: CSS değişkenleri ile tutarlı palet, Google Fonts (link ile), "
+                       "yapışkan üst menü (mobilde hamburger), büyük hero bölümü, kart ızgaraları, hover/odak geçişleri, bol boşluk, "
+                       "768px ve 480px kırılımları; en az 150 satır CSS; görseller için https://picsum.photos/seed/<kelime>/800/600 kullan.")
+                      if path.endswith((".css", ".html")) else "")
                    + (" Fonksiyonlara doctest ekle ve dosya sonuna `if __name__ == '__main__': import doctest; doctest.testmod()` koy." if path.endswith(".py") else "")
                    + (f"\nÖnceki dosyalar:{ctx}" if ctx else ""))
             acc = []
@@ -822,13 +871,42 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
             txt = brain.chat(history + [{"role": "user", "content": ask}], max_tokens=1800,
                              temperature=0.3, cancel=cancel,
                              on_delta=lambda d: acc.append(d))
-            content = _strip_fence(_code_of(txt))
+            content = _clean_file(path, _code_of(txt))
+            why = _sane(path, content, ws)
+            if why:
+                emit("tool_result", name="write_file", out=f"{path}: {why} — yeniden yazdırıyorum")
+                txt = brain.chat(history + [{"role": "user", "content": ask + f"\n\nDİKKAT: önceki cevabında sorun vardı ({why}). "
+                                             f"SADECE '{path}' dosyasının kendi türünde ({path.rsplit('.', 1)[-1]}) tam içeriğini tek kod bloğunda ver."}],
+                                 max_tokens=1800, temperature=0.2, cancel=cancel)
+                content = _clean_file(path, _code_of(txt))
             ws.write(path, content)
             written[path] = content
             emit("file", path=path, op="write")
             emit("tool_result", name="write_file", out=f"yazıldı: {path} ({len(content)} karakter)",
                  dur_ms=int((time.time() - t0) * 1000))
             emit("todo", i=min(i, len(steps) - 1), state="done", text=steps[min(i, len(steps) - 1)])
+
+        # sayfaların çağırdığı ama planda olmayan yerel js/css dosyalarını üret
+        if not stopped() and written:
+            refs = set()
+            for q, c in written.items():
+                if q.endswith(".html"):
+                    refs |= set(re.findall(r"""(?:src|href)=["']([\w\-]+\.(?:js|css))["']""", c))
+            for q in sorted(refs - set(written)):
+                emit("tool", call={"name": "write_file", "args": {"path": q}})
+                ctx = "".join(f"\n--- {pp} ---\n{c[:3000]}\n" for pp, c in written.items())
+                txt = brain.chat(history + [{"role": "user", "content": (
+                    f"Onaylı proje özeti:\n{summary}\nSayfalar '{q}' dosyasını çağırıyor ama henüz yok. "
+                    f"HTML'deki id/sınıf/fonksiyon adlarıyla birebir uyumlu, eksiksiz '{q}' içeriğini tek kod bloğunda ver."
+                    + ((" Profesyonel, modern ve responsive tasarım: CSS değişkenleri, Google Fonts, yapışkan menü, hero, kart ızgarası, "
+                        "hover geçişleri, 768px ve 480px kırılımları; en az 150 satır.") if q.endswith(".css") else "")
+                    + f"\nMevcut dosyalar:{ctx}")}], max_tokens=2400, temperature=0.3, cancel=cancel)
+                c2 = _clean_file(q, _code_of(txt))
+                if not _sane(q, c2, ws):
+                    ws.write(q, c2)
+                    written[q] = c2
+                    emit("file", path=q, op="write")
+                    emit("tool_result", name="write_file", out=f"yazıldı: {q} ({len(c2)} karakter) — sayfaların çağırdığı eksik dosya")
 
     # ---------- 4. doğrula + onar ----------
     def _runtime(path):
@@ -896,12 +974,39 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
                 break
             emit("phase", name="onar", text=f"{path} hatasını düzeltiyorum ({rnd + 1}/{MAX_REPAIR})")
             emit("tool", call={"name": "edit_file", "args": {"path": path}})
+            others = {q: c for q, c in written.items() if q != path and q.endswith((".js", ".css"))}
+            if others:
+                ctx2 = "".join(f"\n--- {q} ---\n{c[:5000]}\n" for q, c in others.items())
+                fx = brain.chat(history + [{"role": "user", "content": (
+                    f"'{path}' tarayıcıda açılınca şu sorunlar çıktı:\n" + "\n".join(problems)
+                    + f"\n\n--- {path} ---\n{content[:6000]}\n{ctx2}\n"
+                    "Hata bu dosyalardan herhangi birinde olabilir (ör. HTML'in çağırdığı fonksiyon script.js'te tanımlı değil, "
+                    "dosya içinde yanlış türde içerik var). Sorunu kökten gider; SADECE değişen dosyaları TAM içerikleriyle "
+                    "JSON olarak ver: {\"files\":[{\"path\":..., \"content\":...}]}")}],
+                    schema=REPAIR_SCHEMA, max_tokens=4000, temperature=0.2, cancel=cancel) or {}
+                changed = []
+                for f2 in (fx.get("files") or []):
+                    q, c2 = str(f2.get("path", "")).lstrip("./"), f2.get("content") or ""
+                    if q in written:
+                        c2 = _clean_file(q, c2)
+                        if not _sane(q, c2, ws):
+                            written[q] = c2
+                            ws.write(q, c2)
+                            emit("file", path=q, op="edit")
+                            changed.append(q)
+                emit("tool_result", name="edit_file", out="düzeltildi: " + (", ".join(changed) if changed else "değişiklik gelmedi"))
+                if changed:
+                    continue
             fix = brain.chat(history + [{"role": "user", "content": (
                 f"'{path}' dosyasında şu sorunlar var:\n" + "\n".join(problems)
                 + f"\n\nMevcut dosya:\n```\n{content[:6000]}\n```\n"
                 "Sorunları gider ve dosyanın TAM düzeltilmiş halini tek kod bloğunda ver.")}],
                 max_tokens=1800, temperature=0.2, cancel=cancel)
-            written[path] = _code_of(fix)
+            newc = _clean_file(path, _code_of(fix))
+            if _sane(path, newc, ws):
+                emit("tool_result", name="edit_file", out=f"{path}: onarım cevabı bozuktu, dosya korundu")
+                continue
+            written[path] = newc
             ws.write(path, written[path])
             emit("file", path=path, op="edit")
             emit("tool_result", name="edit_file", out=f"düzeltildi: {path}")
@@ -924,8 +1029,14 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
         allcode = "\n".join(written.values())
         low_items = {x.lower(): x for x in items}
         missing = [low_items.get(m.lower(), m) for m in missing]
-        missing = [m for m in missing if m in items or any(
-            m.lower() in x.lower() or x.lower() in m.lower() for x in items)]
+        def _to_item(m):
+            if m in items:
+                return m
+            for x in items:
+                if m.lower() in x.lower() or x.lower() in m.lower():
+                    return x
+            return None
+        missing = list(dict.fromkeys(x for x in (_to_item(m) for m in missing) if x))
         for it in items:
             d = _det_check(it, allcode)
             if d is None:

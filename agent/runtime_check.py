@@ -28,7 +28,13 @@ def check_html(path, workdir, max_buttons=12, timeout_ms=15000):
                 b = p.chromium.launch(args=["--allow-file-access-from-files"])
                 pg = b.new_page(viewport={"width": 900, "height": 640})
                 pg.on("pageerror", lambda e: errors.append("çalışma hatası: " + str(e).split("\n")[0][:200]))
+                def _reqfail(r):
+                    u = r.url
+                    if u.startswith("file://") and u.rsplit(".", 1)[-1].lower() in ("js", "css", "html"):
+                        errors.append("eksik dosya: " + u.rsplit("/", 1)[-1] + " (sayfa çağırıyor ama dosya yok)")
+                pg.on("requestfailed", _reqfail)
                 pg.on("console", lambda m: errors.append("konsol hatası: " + m.text[:200])
+                      if "Failed to load resource" not in m.text else None
                       if m.type == "error" and "favicon" not in m.text.lower() else None)
                 pg.goto("file://" + os.path.abspath(path), wait_until="load", timeout=timeout_ms)
                 pg.wait_for_timeout(400)
