@@ -63,6 +63,11 @@ def check_html(path, workdir, max_buttons=12, timeout_ms=15000):
                 pg.wait_for_timeout(300)
                 try:
                     shot = os.path.join(workdir, SHOT_NAME)
+                    try:
+                        pg.evaluate("window.scrollTo(0,0)")
+                        pg.wait_for_timeout(300)
+                    except Exception:
+                        pass
                     pg.screenshot(path=shot)
                 except Exception:
                     shot = None
