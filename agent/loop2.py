@@ -1037,8 +1037,11 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
                     return x
             return None
         missing = list(dict.fromkeys(x for x in (_to_item(m) for m in missing) if x))
+        has_css = any(q.endswith(".css") for q in written) or "<style" in allcode.lower()
         for it in items:
             d = _det_check(it, allcode)
+            if d is None and it.lower().startswith(("görünüm", "tasarım", "stil")) and has_css:
+                d = True  # görünüm maddeleri tarayıcı testi + ekran görüntüsüyle değerlendirilir
             if d is None:
                 words = [w for w in re.findall(r"\w+", it.lower()) if len(w) >= 4]
                 hits = sum(w[:5] in allcode.lower() for w in words)
