@@ -785,7 +785,7 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
                 "SADECE bu isteği uygula, geri kalan her şeyi aynen koru. İstenen her öğe kodda somut "
                 "olarak bulunsun (ör. 'kutucuk' → <input type=\"checkbox\">, 'kırmızı' → gerçek kırmızı renk). "
                 "Dosyanın TAM yeni halini tek kod bloğunda ver, açıklama yazma.")}],
-                max_tokens=1800, temperature=0.2, cancel=cancel)
+                max_tokens=4500, temperature=0.2, cancel=cancel)
             new = _clean_file(path, _code_of(txt))
             why = _sane(path, new, ws)
             if why:
@@ -868,7 +868,7 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
                    + (f"\nÖnceki dosyalar:{ctx}" if ctx else ""))
             acc = []
             t0 = time.time()
-            txt = brain.chat(history + [{"role": "user", "content": ask}], max_tokens=1800,
+            txt = brain.chat(history + [{"role": "user", "content": ask}], max_tokens=4500,
                              temperature=0.3, cancel=cancel,
                              on_delta=lambda d: acc.append(d))
             content = _clean_file(path, _code_of(txt))
@@ -877,8 +877,11 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
                 emit("tool_result", name="write_file", out=f"{path}: {why} — yeniden yazdırıyorum")
                 txt = brain.chat(history + [{"role": "user", "content": ask + f"\n\nDİKKAT: önceki cevabında sorun vardı ({why}). "
                                              f"SADECE '{path}' dosyasının kendi türünde ({path.rsplit('.', 1)[-1]}) tam içeriğini tek kod bloğunda ver."}],
-                                 max_tokens=1800, temperature=0.2, cancel=cancel)
+                                 max_tokens=4500, temperature=0.2, cancel=cancel)
                 content = _clean_file(path, _code_of(txt))
+                why2 = _sane(path, content, ws)
+                if why2:
+                    emit("tool_result", name="write_file", out=f"{path}: hâlâ sorunlu ({why2[:120]}) — test aşamasında onarılacak")
             ws.write(path, content)
             written[path] = content
             emit("file", path=path, op="write")
@@ -900,7 +903,7 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
                     f"HTML'deki id/sınıf/fonksiyon adlarıyla birebir uyumlu, eksiksiz '{q}' içeriğini tek kod bloğunda ver."
                     + ((" Profesyonel, modern ve responsive tasarım: CSS değişkenleri, Google Fonts, yapışkan menü, hero, kart ızgarası, "
                         "hover geçişleri, 768px ve 480px kırılımları; en az 150 satır.") if q.endswith(".css") else "")
-                    + f"\nMevcut dosyalar:{ctx}")}], max_tokens=2400, temperature=0.3, cancel=cancel)
+                    + f"\nMevcut dosyalar:{ctx}")}], max_tokens=4500, temperature=0.3, cancel=cancel)
                 c2 = _clean_file(q, _code_of(txt))
                 if not _sane(q, c2, ws):
                     ws.write(q, c2)
@@ -934,7 +937,7 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
     emit("phase", name="dogrula", text="test ediyorum")
     tested = []
     must = _user_keywords(orig_req + " " + " ".join(str(v) for v in all_answers.values()), answers)
-    for path in list(written):
+    for path in sorted(written, key=lambda q: (q.endswith(".html"), q)):
         for rnd in range(MAX_REPAIR + 1):
             if stopped():
                 break
@@ -1001,7 +1004,7 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
                 f"'{path}' dosyasında şu sorunlar var:\n" + "\n".join(problems)
                 + f"\n\nMevcut dosya:\n```\n{content[:6000]}\n```\n"
                 "Sorunları gider ve dosyanın TAM düzeltilmiş halini tek kod bloğunda ver.")}],
-                max_tokens=1800, temperature=0.2, cancel=cancel)
+                max_tokens=4500, temperature=0.2, cancel=cancel)
             newc = _clean_file(path, _code_of(fix))
             if _sane(path, newc, ws):
                 emit("tool_result", name="edit_file", out=f"{path}: onarım cevabı bozuktu, dosya korundu")
@@ -1066,7 +1069,7 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
                 "Bu dosyada şu gereksinimler eksik:\n" + "\n".join(f"- {m}" for m in missing)
                 + f"\n\nMevcut '{path}':\n```\n{before[:6000]}\n```\n"
                 "Eksikleri somut olarak ekle, kalan her şeyi koru. Dosyanın TAM yeni halini tek kod bloğunda ver.")}],
-                max_tokens=1800, temperature=0.2, cancel=cancel)
+                max_tokens=4500, temperature=0.2, cancel=cancel)
             newc = _code_of(fix)
             okfix = bool(newc.strip())
             if okfix and path.endswith(".html"):
