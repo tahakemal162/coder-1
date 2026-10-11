@@ -862,7 +862,7 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
                    + (" Bu dosya diğer sayfaların kullandığı ortak dosya; HTML'deki sınıf/id adlarıyla birebir uyumlu olsun." if path.endswith((".css", ".js")) else "")
                    + ((" Tasarım profesyonel bir ajans işi gibi olsun: CSS değişkenleri ile tutarlı palet, Google Fonts (link ile), "
                        "yapışkan üst menü (mobilde hamburger), büyük hero bölümü, kart ızgaraları, hover/odak geçişleri, bol boşluk, "
-                       "768px ve 480px kırılımları; en az 150 satır CSS; görseller için https://picsum.photos/seed/<kelime>/800/600 kullan.")
+                       "768px ve 480px kırılımları; en az 150 satır CSS; görseller için konuya uygun https://loremflickr.com/800/600/<ingilizce-konu-kelimeleri,virgülle> kullan (ör. coffee,cafe).")
                       if path.endswith((".css", ".html")) else "")
                    + (" Fonksiyonlara doctest ekle ve dosya sonuna `if __name__ == '__main__': import doctest; doctest.testmod()` koy." if path.endswith(".py") else "")
                    + (f"\nÖnceki dosyalar:{ctx}" if ctx else ""))
