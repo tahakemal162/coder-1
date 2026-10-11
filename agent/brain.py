@@ -189,7 +189,7 @@ def _cloud(messages, max_tokens, temperature, schema, on_delta, cancel, timeout)
                 body = e.read().decode(errors="ignore")[:300] if hasattr(e, "read") else ""
             except Exception:
                 pass
-            daily = "per-day" in body or "exceeded your current quota" in body or "credit balance" in body
+            daily = "per-day" in body or "exceeded your current quota" in body or "credit balance" in body or "402" in msg
             _COOL[p["id"]] = time.time() + (3600 if daily else COOLDOWN)
             print(f"[brain] {p['id']} düştü{' (günlük kota, 1 saat dinlenir)' if daily else ''}: {msg[:100]}",
                   file=sys.stderr, flush=True)
