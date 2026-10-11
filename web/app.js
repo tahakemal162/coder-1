@@ -432,7 +432,7 @@ function addAskCard(ev) {
   const answers = {};
   (ev.questions || []).forEach((q, qi) => {
     const blk = el("div", "ask-q");
-    blk.appendChild(el("div", "ask-title", esc(q.q)));
+    blk.appendChild(el("div", "ask-title", esc(q.q) + (q.multi && !/birden fazla/i.test(q.q) ? " (birden fazla seçebilirsin)" : "")));
     const opts = el("div", "ask-opts");
     (q.options || []).forEach((o) => {
       const b = el("button", "chip", esc(o));
