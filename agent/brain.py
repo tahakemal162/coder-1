@@ -48,17 +48,23 @@ def _providers():
     ork = os.environ.get("OPENROUTER_API_KEY", "").strip()
     gmk = os.environ.get("GEMINI_API_KEY", "").strip()
     OR = "https://openrouter.ai/api/v1/chat/completions"
-    if ork:
-        out.append({"id": "or-super", "label": "Nemotron 3 Super 120B", "kind": "openai", "url": OR, "key": ork,
-                    "model": "nvidia/nemotron-3-super-120b-a12b:free"})
-        out.append({"id": "or-ultra", "label": "Nemotron 3 Ultra 550B", "kind": "openai", "url": OR, "key": ork,
-                    "model": "nvidia/nemotron-3-ultra-550b-a55b:free"})
+    ank = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    if ank:
+        out.append({"id": "an-opus", "label": "Claude Opus 5.5", "kind": "anthropic",
+                    "url": "https://api.anthropic.com/v1/messages", "key": ank, "model": "claude-opus-5-5"})
+        out.append({"id": "an-sonnet", "label": "Claude Sonnet 5.5", "kind": "anthropic",
+                    "url": "https://api.anthropic.com/v1/messages", "key": ank, "model": "claude-sonnet-5-5"})
     GM = "https://generativelanguage.googleapis.com/v1beta/models"
     if gmk:
         out.append({"id": "gm-lite", "label": "Gemini 3.1 Flash Lite", "kind": "gemini", "url": GM, "key": gmk,
                     "model": "gemini-3.1-flash-lite"})
         out.append({"id": "gm-flash", "label": "Gemini Flash", "kind": "gemini", "url": GM, "key": gmk,
                     "model": "gemini-flash-latest"})
+    if ork:
+        out.append({"id": "or-super", "label": "Nemotron 3 Super 120B", "kind": "openai", "url": OR, "key": ork,
+                    "model": "nvidia/nemotron-3-super-120b-a12b:free"})
+        out.append({"id": "or-ultra", "label": "Nemotron 3 Ultra 550B", "kind": "openai", "url": OR, "key": ork,
+                    "model": "nvidia/nemotron-3-ultra-550b-a55b:free"})
     if ork:
         out.append({"id": "or-gemma31", "label": "Gemma 4 31B", "kind": "openai", "url": OR, "key": ork,
                     "model": "google/gemma-4-31b-it:free"})
@@ -128,6 +134,35 @@ def _gem_call(p, messages, max_tokens, temperature, schema, timeout):
     return txt
 
 
+def _an_call(p, messages, max_tokens, temperature, schema, timeout):
+    """Anthropic Messages API; şema varsa tek zorunlu araçla JSON alınır."""
+    sysm = SYSTEM
+    msgs = []
+    for m in messages:
+        if m["role"] == "system":
+            sysm += "\n" + m["content"]
+        else:
+            msgs.append({"role": m["role"], "content": m["content"]})
+    if not msgs or msgs[0]["role"] != "user":
+        msgs.insert(0, {"role": "user", "content": "(başla)"})
+    body = {"model": p["model"], "system": sysm, "messages": msgs,
+            "max_tokens": max(max_tokens, 400), "temperature": temperature}
+    if schema:
+        body["tools"] = [{"name": "cevap", "description": "Yapılandırılmış cevap", "input_schema": schema}]
+        body["tool_choice"] = {"type": "tool", "name": "cevap"}
+    req = urllib.request.Request(p["url"], data=json.dumps(body).encode(), headers={
+        "Content-Type": "application/json", "x-api-key": p["key"], "anthropic-version": "2023-06-01"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        d = json.loads(r.read())
+    for blk in d.get("content", []):
+        if schema and blk.get("type") == "tool_use":
+            return json.dumps(blk.get("input", {}), ensure_ascii=False)
+    txt = "".join(b.get("text", "") for b in d.get("content", []) if b.get("type") == "text")
+    if not txt.strip():
+        raise RuntimeError("boş cevap")
+    return txt
+
+
 def _cloud(messages, max_tokens, temperature, schema, on_delta, cancel, timeout):
     """Zincirdeki ilk çalışan bulut sağlayıcıyla cevap; hepsi düşerse None."""
     import sys
@@ -137,15 +172,23 @@ def _cloud(messages, max_tokens, temperature, schema, on_delta, cancel, timeout)
         if _COOL.get(p["id"], 0) > time.time():
             continue
         try:
-            fn = _gem_call if p["kind"] == "gemini" else _oai_call
+            fn = {"gemini": _gem_call, "anthropic": _an_call}.get(p["kind"], _oai_call)
             txt = fn(p, messages, max_tokens, temperature, schema, min(timeout, 240))
             _LAST[0] = p["label"]
             if on_delta:
                 on_delta(txt)
             return txt
         except Exception as e:
-            _COOL[p["id"]] = time.time() + COOLDOWN
-            print(f"[brain] {p['id']} düştü: {str(e)[:120]}", file=sys.stderr, flush=True)
+            msg = str(e)
+            body = ""
+            try:
+                body = e.read().decode(errors="ignore")[:300] if hasattr(e, "read") else ""
+            except Exception:
+                pass
+            daily = "per-day" in body or "exceeded your current quota" in body or "credit balance" in body
+            _COOL[p["id"]] = time.time() + (3600 if daily else COOLDOWN)
+            print(f"[brain] {p['id']} düştü{' (günlük kota, 1 saat dinlenir)' if daily else ''}: {msg[:100]}",
+                  file=sys.stderr, flush=True)
     return None
 
 
