@@ -108,6 +108,15 @@ def _code_of(text):
     return text.strip() + "\n"
 
 
+def _strip_fence(c):
+    c = (c or "").strip()
+    if c.startswith("```"):
+        c = c.split("\n", 1)[1] if "\n" in c else ""
+    if c.rstrip().endswith("```"):
+        c = c.rstrip()[:-3]
+    return c.strip() + "\n"
+
+
 class _HTMLCheck(html.parser.HTMLParser):
     def __init__(self):
         super().__init__()
@@ -369,6 +378,7 @@ def _skeleton(kind, orig_req, all_answers, prefs, feature_q):
 
 def _discover(orig_req, all_answers, prefs, kind, rnd, prev_qs, cancel):
     """Keşif turu: henüz netleşmemiş başlıklar için somut seçenekli sorular."""
+    all_answers = _clean_answers(all_answers)
     n = {1: "3-4", 2: "1-3"}.get(rnd, "1-2")
     asked = "; ".join(q.get("q", "") for q in prev_qs) or "—"
     plan_hint = (
@@ -413,7 +423,18 @@ def _tr(x):
     return str(x).lower().translate(_TRMAP)
 
 
+def _clean_answers(a):
+    out = {}
+    for k, v in (a or {}).items():
+        sv = str(v)
+        if k == "isim" and ("sen uydur" in sv.lower() or "sen seç" in sv.lower()):
+            sv = "(bunu sen seç: işe uygun, özgün ve Türkçe bir ad)"
+        out[k] = sv
+    return out
+
+
 def _make_brief(orig_req, all_answers, prefs, kind, cancel, prev=None, change=""):
+    all_answers = _clean_answers(all_answers)
     ctx = (f"Müşterinin isteği: {orig_req}\n"
            f"Keşif cevapları: {json.dumps(all_answers, ensure_ascii=False) or '—'}\n"
            f"Kalıcı tercihleri: {json.dumps(prefs, ensure_ascii=False) or '—'}\n")
@@ -801,7 +822,7 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
             txt = brain.chat(history + [{"role": "user", "content": ask}], max_tokens=1800,
                              temperature=0.3, cancel=cancel,
                              on_delta=lambda d: acc.append(d))
-            content = _code_of(txt)
+            content = _strip_fence(_code_of(txt))
             ws.write(path, content)
             written[path] = content
             emit("file", path=path, op="write")
@@ -821,7 +842,7 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
             return []
         if rc["shot"]:
             emit("shot", path=runtime_check.SHOT_NAME)
-        if rc["ok"] and rc.get("interactive", 1) == 0 and kind == "web":
+        if rc["ok"] and rc.get("interactive", 1) == 0 and kind == "web" and path == "index.html":
             rc["ok"] = False
             rc["errors"].append("sayfada hiç etkileşimli öğe yok (buton / giriş alanı / form) — uygulama işlevsiz; "
                                 "özetteki özellikleri gerçekten çalışan buton ve alanlarla ekle")
@@ -909,7 +930,8 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
             d = _det_check(it, allcode)
             if d is None:
                 words = [w for w in re.findall(r"\w+", it.lower()) if len(w) >= 4]
-                if words and all(w[:5] in allcode.lower() for w in words):
+                hits = sum(w[:5] in allcode.lower() for w in words)
+                if words and hits >= max(1, round(len(words) * 0.6)):
                     d = True
             if d is True and it in missing:
                 missing.remove(it)

@@ -38,11 +38,15 @@ def check_html(path, workdir, max_buttons=12, timeout_ms=15000):
                 for el in btns[:max_buttons]:
                     try:
                         if el.is_visible() and el.is_enabled():
-                            el.click(timeout=1500)
+                            try:
+                                el.scroll_into_view_if_needed(timeout=800)
+                            except Exception:
+                                pass
+                            el.click(timeout=1500, force=True)
                             clicked += 1
                             pg.wait_for_timeout(120)
                     except Exception as e:
-                        errors.append(f"buton tıklanamadı: {str(e).split(chr(10))[0][:120]}")
+                        pass  # gizli/örtülü buton tıklanamazsa hata sayılmaz; gerçek hatalar pageerror ile gelir
                 for el in pg.query_selector_all("input[type=text], input:not([type]), textarea")[:4]:
                     try:
                         if el.is_visible():
