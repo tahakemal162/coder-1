@@ -94,7 +94,8 @@ def _oai_call(p, messages, max_tokens, temperature, schema, timeout):
     body = {"model": p["model"], "messages": [{"role": "system", "content": SYSTEM}] + messages,
             "max_tokens": max(max_tokens, 400), "temperature": temperature}
     if "openrouter" in p["url"]:
-        body["reasoning"] = {"enabled": False}
+        if "nemotron" in p["model"]:
+            body["reasoning"] = {"enabled": False}
     if schema is not None:
         body["response_format"] = {"type": "json_schema", "json_schema": {"name": "out", "schema": schema}}
     req = urllib.request.Request(p["url"], data=json.dumps(body).encode(), headers={
