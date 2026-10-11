@@ -69,6 +69,70 @@ function addBannerSafe(t) {
   try { addBanner("warn", t); } catch { /* UI henüz hazır değil */ }
 }
 
+const POLL_MS = 1500;
+const $ = (id) => document.getElementById(id);
+const chatLog = $("chat-log"), termLog = $("term-log"), tree = $("file-tree");
+const input = $("input"), btnSend = $("btn-send"), runBar = $("run-bar");
+const el = (tag, cls, text) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text != null) n.textContent = text;
+  return n;
+};
+
+const S = {
+  taskId: null,
+  seen: 0,
+  running: false,
+  timer: null,
+  pollTimer: null,
+  startAt: 0,
+  steps: 0,
+  sawStep: false,
+  todos: new Map(),      // i -> {state, text?}
+  todoCard: null,
+  sawContent: false,     // görünür cevap/araç geldi mi
+  currentFile: null,
+  fileCache: new Map(),  // path -> content
+  autoOpened: false,
+  awaiting: null,       // açık soru kartı {answers, questions, card}
+  status: "idle",
+};
+const APP = document.querySelector(".app");
+const NAME = () => localStorage.getItem("c1.name") || "";
+const PHASES = { anla: "isteği anlıyor", planla: "planlıyor", yaz: "kod yazıyor",
+  dogrula: "test ediyor", onar: "hatayı düzeltiyor", duzenle: "projeyi düzenliyor", rapor: "raporluyor" };
+
+/* ---------- yardımcılar ---------- */
+
+const esc = (s) => String(s ?? "");
+
+/* ---------- giriş (parola) ---------- */
+
+let TOK = localStorage.getItem("c1.tok") || "";
+const withTok = (p) =>
+  p + (p.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(TOK);
+
+function showLogin() {
+  $("login").classList.remove("hidden");
+  setTimeout(() => $("login-pass").focus(), 60);
+}
+function hideLogin() {
+  const l = $("login");
+  if (l.classList.contains("hidden")) return;
+  l.classList.add("leaving");
+  setTimeout(() => { l.classList.remove("leaving"); l.classList.add("hidden"); }, 350);
+}
+
+function authFail(r) {
+  if (r.status === 401) {
+    TOK = ""; localStorage.removeItem("c1.tok");
+    showLogin();
+    return true;
+  }
+  return false;
+}
+
 async function apiGet(path) {
   const r = await fetchApi(withTok(path));
   if (authFail(r)) throw new Error("yetkisiz");
