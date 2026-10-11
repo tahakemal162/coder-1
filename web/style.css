@@ -221,3 +221,5 @@ a{color:var(--accent);text-decoration:none;cursor:pointer}
   .ask-card .msg-body{padding-left:44px}
 }
 @media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
+
+.msg-suggest .msg-body{background:transparent;border:1px dashed var(--line-2);border-radius:14px;padding:12px 14px 12px 52px}

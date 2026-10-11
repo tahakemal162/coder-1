@@ -138,13 +138,16 @@ def login(body: dict):
 
 @app.middleware("http")
 async def auth_gate(req: Request, call_next):
+    if req.method == "OPTIONS":  # CORS ön uçuşu token taşımaz
+        return await call_next(req)
     if (req.url.path.startswith("/api") or req.url.path.startswith("/v1")) and \
             req.url.path not in ("/api/login", "/api/register"):
         tok = req.headers.get("authorization", "").removeprefix("Bearer ").strip()
         if not tok:
             tok = req.query_params.get("token", "")
         if tok not in TOKENS:
-            return JSONResponse({"detail": "yetkisiz"}, status_code=401)
+            return JSONResponse({"detail": "yetkisiz"}, status_code=401,
+                                headers={"Access-Control-Allow-Origin": "*"})
     return await call_next(req)
 
 # ajan backend route'ları (/api/*)

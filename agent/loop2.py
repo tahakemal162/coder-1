@@ -40,6 +40,12 @@ UNDERSTAND_SCHEMA = {
     },
     "required": ["kind", "clear", "summary", "questions"],
 }
+SUGGEST_SCHEMA = {
+    "type": "object",
+    "properties": {"items": {"type": "array", "items": {"type": "string"}}},
+    "required": ["items"],
+}
+
 PLAN_SCHEMA = {
     "type": "object",
     "properties": {
@@ -179,6 +185,66 @@ def _user_keywords(text, answers):
     return kws[:4]
 
 
+ASK_MARK = "Tam istediğin gibi olsun diye birkaç soru: "
+
+
+def _filter_questions(qs, task_text, prefs):
+    """Cevabı zaten istekte ya da tercihlerde olan soruları ele."""
+    low = task_text.lower()
+    known = " ".join(str(v).lower() for v in (prefs or {}).values())
+    out = []
+    for q in qs or []:
+        if not q.get("q"):
+            continue
+        opts = [str(o).lower() for o in (q.get("options") or []) if str(o).strip()]
+        if any(len(o) >= 3 and o in low for o in opts):
+            continue
+        if str(q.get("key", "")).lower() in (prefs or {}) and any(o in known for o in opts):
+            continue
+        out.append(q)
+    return out[:3]
+
+
+def _project_files(workdir):
+    """Çalışma alanındaki kaynak dosyalar (gizli/klasör dışı), en fazla 3."""
+    out = []
+    for root, dirs, files in os.walk(workdir):
+        dirs[:] = [d for d in dirs if not d.startswith(".")]
+        for f in files:
+            if f.startswith(".") or not f.endswith((".html", ".py", ".js", ".css")):
+                continue
+            out.append(os.path.relpath(os.path.join(root, f), workdir))
+    return sorted(out)[:3]
+
+
+DEFAULT_STEPS = {
+    "web": ["karanlık mod ekle", "mobil görünümü iyileştir", "verileri tarayıcıda sakla"],
+    "python": ["hatalı girişleri yakala", "komut satırı arayüzü ekle", "daha fazla test ekle"],
+}
+
+
+VERBISH = ("ekle", "yap", "koy", "göster", "kaydet", "iyileştir", "düzelt", "değiştir", "sırala",
+           "filtrele", "ayır", "destek", "mod", "animasyon", "büyüt", "küçült", "renk", "ara", "sil",
+           "kullan", "çevir", "tut", "say", "hesapla", "paylaş", "yazdır", "indir", "oyna", "sesli")
+
+
+def _next_steps(history, kind, cancel=None):
+    """Bitmiş proje için 3 somut 'sonraki adım' önerisi (emir kipinde, kısa)."""
+    try:
+        sg = brain.chat(history + [{"role": "user", "content": (
+            "Az önce bitirdiğin bu projeyi kullanıcı bir adım ileri taşımak istese ne isteyebilir? "
+            "3 kısa, somut, EMİR kipinde Türkçe geliştirme önerisi yaz (2-6 kelime; her biri bir özellik "
+            "eklemeli ya da bir şeyi değiştirmeli). Örnek biçim: 'karanlık mod ekle', 'görevleri tarihe göre sırala'. "
+            "SADECE JSON: {\"items\": [\"...\", \"...\", \"...\"]}")}],
+            schema=SUGGEST_SCHEMA, max_tokens=150, temperature=0.4, cancel=cancel, model=brain.FAST_MODEL) or {}
+        items = [x.strip().rstrip(".").lower() for x in (sg.get("items") or []) if isinstance(x, str) and x.strip()]
+        items = [x for x in items if 6 <= len(x) <= 60 and " " in x and any(v in x for v in VERBISH)][:3]
+    except Exception:
+        items = []
+    defaults = DEFAULT_STEPS.get(kind, DEFAULT_STEPS["web"])
+    return (items + [d for d in defaults if d not in items])[:3]
+
+
 def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
                 history=None, prefs=None, answers=None, user=""):
     """Bir konuşma turunu çalıştır. Soru sorulursa {"waiting": True} döner."""
@@ -210,7 +276,8 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
     emit("phase", name="anla", text="isteği anlıyorum")
     pref_txt = ("Kullanıcının bilinen tercihleri (bunları tekrar sorma): "
                 + json.dumps(prefs, ensure_ascii=False)) if prefs else ""
-    asked_before = any(m.get("content", "").startswith("Cevaplarım:") for m in history)
+    asked_before = any(str(m.get("content", "")).startswith(("Cevaplarım:", ASK_MARK))
+                       for m in history[:-1])
     try:
         u = brain.chat(history + [{"role": "user", "content": (
             "Yukarıdaki isteği değerlendir ve SADECE JSON ver.\n"
@@ -236,9 +303,22 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
         if kind == "chat":
             kind = "web"
     summary = u.get("summary") or task_text
-    questions = [q for q in (u.get("questions") or []) if q.get("q")][:3]
+    questions = _filter_questions(u.get("questions"), task_text, prefs)
+    if _detail_score(task_text) >= 3:   # kullanıcı zaten yeterince detay verdi
+        questions = []
 
-    if kind == "chat":
+    # ---------- düzenleme turu: proje bitmişken gelen ek istek ----------
+    done_before = any(m.get("role") == "assistant" and
+                      str(m.get("content", "")).startswith(("**Hazır.**", "**Bitti"))
+                      for m in history[:-1])
+    existing = _project_files(workdir)
+    revision = bool(done_before and existing and not answers)
+    if revision:
+        kind = "web" if any(p.endswith(".html") for p in existing) else "python"
+        summary = task_text
+        questions = []
+
+    if kind == "chat" and not revision:
         acc = []
         reply = brain.chat(history + [{"role": "user", "content":
                            "Kısa, samimi ve Türkçe cevap ver. Kod üretme; gerekirse ne yapabileceğini bir cümleyle söyle."}],
@@ -249,74 +329,125 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
         emit("done", ok=True, steps=1)
         return {"ok": True, "answer": reply, "trace": trace, "history": history, "prefs": prefs}
 
-    if not asked_before and kind != "chat" and not questions and _detail_score(task_text) < 2:
+    if not revision and not asked_before and kind != "chat" and not questions and _detail_score(task_text) < 2:
         try:
             q2 = brain.chat(history + [{"role": "user", "content": (
                 "İstek kısa ve detaysız. Sonucu kullanıcının hayaline birebir uydurmak için "
                 "2-3 kısa Türkçe soru üret, her birine 2-4 somut seçenek ver (ör. renk/tema, "
                 "ana özellik, dil/stil). SADECE JSON ver." + ("\n" + pref_txt if pref_txt else ""))}],
                 schema=UNDERSTAND_SCHEMA, max_tokens=400, cancel=cancel, model=brain.FAST_MODEL)
-            questions = [q for q in (q2.get("questions") or []) if q.get("q")][:3]
+            questions = _filter_questions(q2.get("questions"), task_text, prefs)
         except Exception:
             questions = []
     if questions and not asked_before:
         emit("ask", questions=questions, summary=summary)
         history.append({"role": "assistant", "content":
-                        "Tam istediğin gibi olsun diye birkaç soru: " +
-                        json.dumps(questions, ensure_ascii=False)})
+                        ASK_MARK + json.dumps(questions, ensure_ascii=False)})
         return {"ok": True, "waiting": True, "trace": trace, "history": history, "prefs": prefs}
 
-    # ---------- 2. planla ----------
-    emit("phase", name="planla", text="planlıyorum")
-    plan = brain.chat(history + [{"role": "user", "content": (
-        f"İstek özeti: {summary}\nTek bir küçük, çalışan proje planla ve SADECE JSON ver. "
-        "files: " + ("tek bir index.html (CSS+JS içinde)" if kind == "web" else
-                     "tek bir .py dosyası (içinde doctest)" if kind == "python" else "en fazla 3 dosya")
-        + ". İstenmeyen ekstra dosya/arayüz ekleme. steps: 3-5 kısa adım. tests: nasıl doğrulanacağı (2-4 madde).")}],
-        schema=PLAN_SCHEMA, max_tokens=600, cancel=cancel, model=brain.FAST_MODEL) or {}
-    files = [f for f in (plan.get("files") or []) if f.get("path")][:3]
-    if kind == "python":
-        files = [f for f in files if f["path"].endswith(".py")][:1]
-    elif kind == "web":
-        files = [f for f in files if f["path"].endswith((".html", ".css", ".js"))]
-        if any(f["path"].endswith(".html") for f in files):
-            files = [f for f in files if f["path"].endswith(".html")][:1]
-    if not files:
-        files = [{"path": "index.html" if kind == "web" else "main.py", "purpose": summary}]
-    steps = plan.get("steps") or [f"{f['path']} dosyasını yaz" for f in files]
-    for i, s in enumerate(steps):
-        emit("todo", i=i, state="todo", text=s)
-    model_text(f"Plan: {plan.get('title') or summary}")
+    # ---------- anladığımı söyle ----------
+    if answers:
+        vals = [str(v).strip() for v in answers.values() if str(v).strip()]
+        if vals:
+            emit("answer", text="Anladım: " + ", ".join(f"**{v[:40]}**" for v in vals)
+                 + " — buna göre yapıyorum.")
+    elif prefs and not asked_before and not revision and _detail_score(task_text) < 3:
+        vals = [str(v).strip()[:30] for v in list(prefs.values())[:4] if str(v).strip()]
+        if vals:
+            emit("answer", text="Önceki tercihlerini hatırlıyorum (" + ", ".join(vals)
+                 + "); onlara göre yapıyorum, değiştirmek istersen söyle.")
 
-    # ---------- 3. yaz ----------
-    emit("phase", name="yaz", text="kodu yazıyorum")
-    written = {}
-    for i, f in enumerate(files):
-        if stopped():
-            break
-        path = f["path"].lstrip("./")
-        emit("todo", i=min(i, len(steps) - 1), state="active", text=steps[min(i, len(steps) - 1)])
-        emit("tool", call={"name": "write_file", "args": {"path": path}})
-        ctx = "".join(f"\n--- {p} ---\n{c[:3000]}\n" for p, c in written.items())
-        ask = (f"İstek: {summary}\n" + (pref_txt + "\n" if pref_txt else "")
-               + f"Şimdi '{path}' dosyasının TAM içeriğini yaz ({f.get('purpose','')}). "
-               "Tek bir kod bloğu içinde ver, açıklama yazma. Kullanıcının söylediği her detay "
-               "(renk, özellik, dil) kodda somut olarak bulunsun. Çalışır, eksiksiz kod; yer tutucu yok."
-               + (" Sayfa responsive olsun, tüm CSS ve JS aynı dosyada olsun." if path.endswith(".html") else "")
-               + (" Fonksiyonlara doctest ekle ve dosya sonuna `if __name__ == '__main__': import doctest; doctest.testmod()` koy." if path.endswith(".py") else "")
-               + (f"\nÖnceki dosyalar:{ctx}" if ctx else ""))
-        acc = []
-        t0 = time.time()
-        txt = brain.chat(history + [{"role": "user", "content": ask}], max_tokens=1800,
-                         temperature=0.3, cancel=cancel,
-                         on_delta=lambda d: acc.append(d))
-        content = _code_of(txt)
-        ws.write(path, content)
-        written[path] = content
-        emit("file", path=path, op="write")
-        emit("tool_result", name="write_file", out=f"yazıldı: {path} ({len(content)} karakter)",
-             dur_ms=int((time.time() - t0) * 1000))
-        emit("todo", i=min(i, len(steps) - 1), state="done", text=steps[min(i, len(steps) - 1)])
+    if revision:
+        # ---------- 2b. düzenle ----------
+        emit("phase", name="duzenle", text="mevcut projeyi düzenliyorum")
+        plan = {"title": "Düzenleme: " + task_text[:70]}
+        steps = [f"{p} dosyasında isteği uygula" for p in existing[:3]]
+        for i, st in enumerate(steps):
+            emit("todo", i=i, state="todo", text=st)
+        written = {}
+        for i, path in enumerate(existing[:3]):
+            if stopped():
+                break
+            emit("todo", i=i, state="active", text=steps[i])
+            cur = ws.read(path, max_chars=7000)
+            emit("tool", call={"name": "edit_file", "args": {"path": path}})
+            t0 = time.time()
+            txt = brain.chat(history + [{"role": "user", "content": (
+                f"Kullanıcının değişiklik isteği: {task_text}\n" + (pref_txt + "\n" if pref_txt else "")
+                + f"Mevcut '{path}' dosyası:\n```\n{cur}\n```\n"
+                "SADECE bu isteği uygula, geri kalan her şeyi aynen koru. Dosyanın TAM yeni halini "
+                "tek kod bloğunda ver, açıklama yazma.")}],
+                max_tokens=1800, temperature=0.2, cancel=cancel)
+            new = _code_of(txt)
+            if new.strip() and new.strip() != cur.strip():
+                ws.write(path, new)
+                written[path] = new
+                emit("file", path=path, op="edit")
+                emit("tool_result", name="edit_file", out=f"düzenlendi: {path} ({len(new)} karakter)",
+                     dur_ms=int((time.time() - t0) * 1000))
+            else:
+                emit("tool_result", name="edit_file", out=f"değişiklik gerekmedi: {path}")
+            emit("todo", i=i, state="done", text=steps[i])
+        if written:
+            try:
+                d = ws.diff()
+                if d and d.strip():
+                    emit("tool", call={"name": "run_command", "args": {"cmd": "git diff"}})
+                    emit("tool_result", name="run_command", out=d[:2000])
+            except Exception:
+                pass
+    else:
+        # ---------- 2. planla ----------
+        emit("phase", name="planla", text="planlıyorum")
+        plan = brain.chat(history + [{"role": "user", "content": (
+            f"İstek özeti: {summary}\nTek bir küçük, çalışan proje planla ve SADECE JSON ver. "
+            "files: " + ("tek bir index.html (CSS+JS içinde)" if kind == "web" else
+                         "tek bir .py dosyası (içinde doctest)" if kind == "python" else "en fazla 3 dosya")
+            + ". İstenmeyen ekstra dosya/arayüz ekleme. steps: 3-5 kısa adım. tests: nasıl doğrulanacağı (2-4 madde).")}],
+            schema=PLAN_SCHEMA, max_tokens=600, cancel=cancel, model=brain.FAST_MODEL) or {}
+        files = [f for f in (plan.get("files") or []) if f.get("path")][:3]
+        if kind == "python":
+            files = [f for f in files if f["path"].endswith(".py")][:1]
+        elif kind == "web":
+            files = [f for f in files if f["path"].endswith((".html", ".css", ".js"))]
+            if any(f["path"].endswith(".html") for f in files):
+                files = [f for f in files if f["path"].endswith(".html")][:1]
+        if not files:
+            files = [{"path": "index.html" if kind == "web" else "main.py", "purpose": summary}]
+        steps = plan.get("steps") or [f"{f['path']} dosyasını yaz" for f in files]
+        for i, s in enumerate(steps):
+            emit("todo", i=i, state="todo", text=s)
+        model_text(f"Plan: {plan.get('title') or summary}")
+
+        # ---------- 3. yaz ----------
+        emit("phase", name="yaz", text="kodu yazıyorum")
+        written = {}
+        for i, f in enumerate(files):
+            if stopped():
+                break
+            path = f["path"].lstrip("./")
+            emit("todo", i=min(i, len(steps) - 1), state="active", text=steps[min(i, len(steps) - 1)])
+            emit("tool", call={"name": "write_file", "args": {"path": path}})
+            ctx = "".join(f"\n--- {p} ---\n{c[:3000]}\n" for p, c in written.items())
+            ask = (f"İstek: {summary}\n" + (pref_txt + "\n" if pref_txt else "")
+                   + f"Şimdi '{path}' dosyasının TAM içeriğini yaz ({f.get('purpose','')}). "
+                   "Tek bir kod bloğu içinde ver, açıklama yazma. Kullanıcının söylediği her detay "
+                   "(renk, özellik, dil) kodda somut olarak bulunsun. Çalışır, eksiksiz kod; yer tutucu yok."
+                   + (" Sayfa responsive olsun, tüm CSS ve JS aynı dosyada olsun." if path.endswith(".html") else "")
+                   + (" Fonksiyonlara doctest ekle ve dosya sonuna `if __name__ == '__main__': import doctest; doctest.testmod()` koy." if path.endswith(".py") else "")
+                   + (f"\nÖnceki dosyalar:{ctx}" if ctx else ""))
+            acc = []
+            t0 = time.time()
+            txt = brain.chat(history + [{"role": "user", "content": ask}], max_tokens=1800,
+                             temperature=0.3, cancel=cancel,
+                             on_delta=lambda d: acc.append(d))
+            content = _code_of(txt)
+            ws.write(path, content)
+            written[path] = content
+            emit("file", path=path, op="write")
+            emit("tool_result", name="write_file", out=f"yazıldı: {path} ({len(content)} karakter)",
+                 dur_ms=int((time.time() - t0) * 1000))
+            emit("todo", i=min(i, len(steps) - 1), state="done", text=steps[min(i, len(steps) - 1)])
 
     # ---------- 4. doğrula + onar ----------
     emit("phase", name="dogrula", text="test ediyorum")
@@ -377,6 +508,8 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
               else "Çalıştır: `python3 " + next(iter(written)) + "`" if written else ""))
     emit("answer", text=rep)
     history.append({"role": "assistant", "content": rep})
+    if written and not stopped():
+        emit("suggest", items=_next_steps(history, kind, cancel))
     ok = bool(written) and len(tested) == len(written)
     emit("done", ok=ok, steps=len(trace))
     return {"ok": ok, "answer": rep, "trace": trace, "history": history, "prefs": prefs,

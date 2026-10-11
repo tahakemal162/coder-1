@@ -4,12 +4,48 @@
  * localStorage "coder1.api" ile ayarlanır.
  */
 
-const API = (() => {
+let API = (() => {
   const q = new URLSearchParams(location.search).get("api");
   if (q) localStorage.setItem("coder1.api", q);
   return (localStorage.getItem("coder1.api") || location.origin)
     .replace(/\/+$/, "");
 })();
+
+/* Canlı backend adresi: tünel değişince Vercel yeniden deploy'u beklemeden
+ * Edge Config'ten (salt okunur anahtar) güncel adresi alır. ?api= verilmişse
+ * ya da localhost'taysak dokunmaz. */
+const EDGE = { id: "ecfg_tquihxfzp6zgddt2sx4vtfcpkwid", token: "db70e0dd-5fbd-4e73-8235-a036551c77a7" };
+const API_PINNED = !!localStorage.getItem("coder1.api") || /^https?:\/\/(localhost|127\.)/.test(location.origin);
+let _resolvedAt = 0;
+async function resolveBackend(force) {
+  if (API_PINNED || !EDGE.id) return false;
+  if (!force && Date.now() - _resolvedAt < 15000) return false;
+  _resolvedAt = Date.now();
+  try {
+    const r = await fetch(`https://edge-config.vercel.com/${EDGE.id}/item/backend`,
+      { headers: { Authorization: "Bearer " + EDGE.token }, signal: AbortSignal.timeout(4000) });
+    const u = await r.json();
+    if (typeof u !== "string" || !/^https?:\/\//.test(u)) return false;
+    const base = u.replace(/\/+$/, "");
+    if (base === API) return false;
+    const h = await fetch(base + "/healthz", { signal: AbortSignal.timeout(6000) }).catch(() => null);
+    if (h && h.ok) { API = base; return true; }
+  } catch { /* edge yok → aynı origin'den devam */ }
+  return false;
+}
+const backendReady = resolveBackend(true);
+async function fetchApi(path, init) {
+  await backendReady;
+  const go = () => fetch(API + path, init);
+  let r = null, err = null;
+  try { r = await go(); } catch (e) { err = e; }
+  if (r && r.status < 502) return r;
+  if (await resolveBackend(true)) {        // adres değişmiş → yeni adrese tekrar dene
+    try { return await go(); } catch (e) { err = e; }
+  }
+  if (r) return r;
+  throw err;
+}
 
 const POLL_MS = 1500;
 const $ = (id) => document.getElementById(id);
@@ -43,7 +79,7 @@ const S = {
 const APP = document.querySelector(".app");
 const NAME = () => localStorage.getItem("c1.name") || "";
 const PHASES = { anla: "isteği anlıyor", planla: "planlıyor", yaz: "kod yazıyor",
-  dogrula: "test ediyor", onar: "hatayı düzeltiyor", rapor: "raporluyor" };
+  dogrula: "test ediyor", onar: "hatayı düzeltiyor", duzenle: "projeyi düzenliyor", rapor: "raporluyor" };
 
 /* ---------- yardımcılar ---------- */
 
@@ -76,13 +112,13 @@ function authFail(r) {
 }
 
 async function apiGet(path) {
-  const r = await fetch(API + withTok(path));
+  const r = await fetchApi(withTok(path));
   if (authFail(r)) throw new Error("yetkisiz");
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
 }
 async function apiPost(path, body) {
-  const r = await fetch(API + withTok(path), {
+  const r = await fetchApi(withTok(path), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body ?? {}),
@@ -107,7 +143,7 @@ $("login-form").addEventListener("submit", async (e) => {
     password: $("login-pass").value,
   };
   try {
-    const r = await fetch(API + "/api/" + authMode, {
+    const r = await fetchApi("/api/" + authMode, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -312,6 +348,26 @@ function onEvent(ev) {
       const _m = addMsg("msg-answer", "");
       _m.querySelector(".msg-body").innerHTML = mdLite(_txt);
       addVote(_m, _txt);
+      break;
+    }
+    case "suggest": {
+      const items = (ev.items || []).filter(Boolean);
+      if (!items.length) break;
+      const m = addMsg("msg-answer msg-suggest", "");
+      const body = m.querySelector(".msg-body");
+      body.appendChild(el("div", "ask-title", "Sonraki adım? Birini seç ya da kendin yaz:"));
+      const row = el("div", "ask-opts");
+      for (const it of items) {
+        const c = el("button", "chip", it);
+        c.type = "button";
+        c.addEventListener("click", () => {
+          row.querySelectorAll("button").forEach(n => n.disabled = true);
+          c.classList.add("sel");
+          send(it);
+        });
+        row.appendChild(c);
+      }
+      body.appendChild(row);
       break;
     }
     case "todo":
