@@ -48,6 +48,9 @@ def _providers():
     ork = os.environ.get("OPENROUTER_API_KEY", "").strip()
     gmk = os.environ.get("GEMINI_API_KEY", "").strip()
     OR = "https://openrouter.ai/api/v1/chat/completions"
+    if ork and os.environ.get("C1_OR_OPUS", "1") == "1":
+        out.append({"id": "or-opus", "label": "Claude Opus 5.5 (OpenRouter)", "kind": "openai", "url": OR, "key": ork,
+                    "model": "anthropic/claude-opus-5.5"})
     ank = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     if ank:
         out.append({"id": "an-opus", "label": "Claude Opus 5.5", "kind": "anthropic",
