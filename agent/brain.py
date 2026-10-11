@@ -4,6 +4,7 @@
 coder-1 kimliği, soru sorma akışı, doğrulama ve onarım döngüsü bizimdir.
 """
 import json
+import threading
 import os
 import urllib.request
 
@@ -28,9 +29,42 @@ def available():
         return False
 
 
+_GATE = threading.Lock()          # CPU'da tek model: çağrılar sırayla
+_WAITING = [0]
+TLS = threading.local()           # TLS.on_wait = callable(n_onde) → görev "sırada" bilgisi verir
+
+
+def _acquire(cancel):
+    if _GATE.acquire(blocking=False):
+        return True
+    hook = getattr(TLS, "on_wait", None)
+    _WAITING[0] += 1
+    try:
+        if hook:
+            try:
+                hook(_WAITING[0])
+            except Exception:
+                pass
+        while not _GATE.acquire(timeout=1.0):
+            if cancel is not None and cancel.is_set():
+                return False
+        return True
+    finally:
+        _WAITING[0] -= 1
+
+
 def chat(messages, max_tokens=1200, temperature=0.3, schema=None,
          on_delta=None, model=None, cancel=None, timeout=900):
     """Ollama /api/chat (stream). schema verilirse JSON zorlanır ve dict döner."""
+    if not _acquire(cancel):
+        raise RuntimeError("iptal edildi")
+    try:
+        return _chat(messages, max_tokens, temperature, schema, on_delta, model, cancel, timeout)
+    finally:
+        _GATE.release()
+
+
+def _chat(messages, max_tokens, temperature, schema, on_delta, model, cancel, timeout):
     body = {
         "model": model or BRAIN_MODEL,
         "messages": [{"role": "system", "content": SYSTEM}] + messages,

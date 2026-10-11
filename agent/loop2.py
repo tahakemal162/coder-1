@@ -430,7 +430,10 @@ def _make_brief(orig_req, all_answers, prefs, kind, cancel, prev=None, change=""
         return bool(toks) and sum(t[:5] in said for t in toks) >= max(1, len(toks) // 2)
     extras = [f for f in (b.get("features") or [])
               if f.lower() not in [u.lower() for u in user_feats] and not _said(f)]
-    kept = [f for f in (b.get("features") or []) if f not in extras]
+    utoks = set(t for u in user_feats for t in re.findall(r"\w+", u.lower()))
+    kept = [f for f in (b.get("features") or []) if f not in extras
+            and not (len(re.findall(r"\w+", f)) > 1
+                     and set(re.findall(r"\w+", f.lower())) <= utoks)]
     b["features"] = user_feats + [f for f in kept if f.lower() not in [u.lower() for u in user_feats]] \
         + [f + " (önerim)" for f in extras[:2]]
     if not b["features"]:
@@ -529,6 +532,9 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
         prefs.update(_pref_items(answers))
 
     # ---------- 1. anla + keşif + özet ----------
+    brain.TLS.on_wait = lambda n: emit(
+        "phase", name="sira",
+        text=f"model şu an başka bir görevle meşgul, sırada bekliyorum ({n} görev önde)")
     emit("phase", name="anla", text="isteği anlıyorum")
     pref_txt = ("Kullanıcının bilinen tercihleri (bunları tekrar sorma): "
                 + json.dumps(prefs, ensure_ascii=False)) if prefs else ""
