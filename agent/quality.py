@@ -9,7 +9,7 @@ import re
 from html.parser import HTMLParser
 
 ROUND_THEMES = [
-    ("mobil", "telefon ekranında (390px) düzen, dokunma hedefleri (min 44px), yatay taşma, menü kullanılabilirliği"),
+    ("mobil", "telefon ekranında (390px) düzen: üst menü ya hamburger menüye dönüşsün ya da logo ile çakışmadan düzgün sarılsın; başlıklar ekrana sığsın (clamp/responsive font), dokunma hedefleri en az 44px, yatay taşma olmasın, kartlar tek sütuna insin"),
     ("erisilebilirlik", "erişilebilirlik: alt metinleri, form etiketleri (label/for), kontrast, klavye odak görünürlüğü, başlık hiyerarşisi (tek h1)"),
     ("icerik", "içerik kalitesi: gerçekçi ve ikna edici Türkçe metinler, boş/yer tutucu metin kalmasın, tutarlı marka adı"),
     ("etkilesim", "etkileşim: tüm buton ve bağlantılar çalışsın, form doğrulama ve başarı mesajı, boş durumlar, hata mesajları"),
