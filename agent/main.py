@@ -336,7 +336,7 @@ def model_info():
         out = json.loads(r.read())
         out["docker"] = docker_status()
         if USE_BRAIN and _brain.available():
-            out["brain"] = _brain.BRAIN_MODEL
+            out["brain"] = _brain.current_label()
             out["model"] = "coder-1"
         return out
     except Exception as e:

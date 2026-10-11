@@ -229,3 +229,8 @@ a{color:var(--accent);text-decoration:none;cursor:pointer}
 
 .msg-shot .msg-body { padding: 8px 8px 8px 52px; }
 .shot-img { max-width: 100%; border-radius: 12px; border: 1px solid var(--line-2); display: block; }
+
+.g-wrap{margin-top:14px}
+.g-or{display:flex;align-items:center;gap:10px;color:var(--muted,#8a94a6);font-size:12px;margin-bottom:10px}
+.g-or:before,.g-or:after{content:"";flex:1;height:1px;background:var(--line-2,#2a3140)}
+.g-btn{display:flex;justify-content:center;min-height:40px}

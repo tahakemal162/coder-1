@@ -75,7 +75,7 @@ def _check_pw(body, require_name=False):
     if not name or not pw:
         return None, "ad ve parola gerekli"
     u = _users().get(name)
-    if not u:
+    if not u or u.get("google"):
         return None, "kullanıcı yok — önce kayıt ol"
     return (name if _hash(pw, u["salt"]) == u["hash"] else None), "yanlış parola"
 
@@ -128,6 +128,44 @@ def feedback(body: dict):
         return JSONResponse({"detail": str(e)}, 500)
 
 
+GOOGLE_CLIENT_ID = os.environ.get("C1_GOOGLE_CLIENT_ID", "").strip()
+
+
+@app.get("/api/auth/config")
+def auth_config():
+    return {"google_client_id": GOOGLE_CLIENT_ID}
+
+
+@app.post("/api/auth/google")
+def login_google(body: dict):
+    """Google ile giriş: tarayıcıdan gelen ID token'ı Google'a doğrulatır, e-postayı hesap yapar."""
+    import urllib.request as _ur
+    import urllib.parse as _up
+    if not GOOGLE_CLIENT_ID:
+        return JSONResponse({"detail": "Google ile giriş bu sunucuda kapalı"}, 503)
+    cred = (body.get("credential") or "").strip()
+    if not cred:
+        return JSONResponse({"detail": "kimlik bilgisi yok"}, 400)
+    try:
+        info = _json.loads(_ur.urlopen("https://oauth2.googleapis.com/tokeninfo?id_token="
+                                       + _up.quote(cred), timeout=10).read())
+    except Exception:
+        return JSONResponse({"detail": "Google doğrulaması başarısız"}, 401)
+    if info.get("aud") != GOOGLE_CLIENT_ID or info.get("email_verified") not in ("true", True):
+        return JSONResponse({"detail": "Google kimliği geçersiz"}, 401)
+    email = (info.get("email") or "").lower()
+    name = "g:" + email
+    with _users_lock:
+        u = _users()
+        if name not in u:
+            u[name] = {"google": True, "email": email, "display": info.get("name") or email.split("@")[0],
+                       "created": __import__("time").time()}
+            _save_users(u)
+    out = _issue(name)
+    out["display"] = u[name].get("display") or email
+    return out
+
+
 @app.post("/api/login")
 def login(body: dict):
     name, err = _check_pw(body)
@@ -141,7 +179,7 @@ async def auth_gate(req: Request, call_next):
     if req.method == "OPTIONS":  # CORS ön uçuşu token taşımaz
         return await call_next(req)
     if (req.url.path.startswith("/api") or req.url.path.startswith("/v1")) and \
-            req.url.path not in ("/api/login", "/api/register"):
+            req.url.path not in ("/api/login", "/api/register", "/api/auth/google", "/api/auth/config"):
         tok = req.headers.get("authorization", "").removeprefix("Bearer ").strip()
         if not tok:
             tok = req.query_params.get("token", "")

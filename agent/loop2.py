@@ -67,6 +67,7 @@ BRIEF_SCHEMA = {
         "goal": {"type": "string"},
         "audience": {"type": "string"},
         "features": {"type": "array", "items": {"type": "string"}},
+        "pages": {"type": "array", "items": {"type": "string"}},
         "look": {"type": "string"},
         "behavior": {"type": "array", "items": {"type": "string"}},
         "language": {"type": "string"},
@@ -230,9 +231,9 @@ MAX_ROUNDS = 2          # keşif turu üst sınırı
 MAX_BRIEF_EDITS = 2     # özet düzeltme turu üst sınırı
 PREF_KEYS = ("renk", "tema", "stil", "dil", "görün", "gorun", "font", "tasar", "mod")
 COVERAGE = {
-    "web": ["amaç ve kimin kullanacağı", "ana özellikler (kullanıcı neler yapabilecek)",
-            "görünüm: renk/tema/stil", "veri: bilgiler tarayıcıda saklansın mı",
-            "arayüz dili ve metinler", "ekran: telefon mu masaüstü mü öncelikli"],
+    "web": ["site/işletme adı ve amacı", "sayfalar ve her sayfadaki bölümler",
+            "ana özellikler (ziyaretçi neler yapabilecek)", "görünüm: renk/tema/stil",
+            "iletişim yolu (form / WhatsApp / telefon)", "metinler ve dil", "telefon uyumu"],
     "python": ["ne girip ne çıkacak", "ana işlevler", "hatalı girişte ne olacak",
                "kullanım şekli: fonksiyon mu komut satırı mı", "örnek girdi/çıktı"],
     "other": ["amaç", "ana özellikler", "girdi/çıktı", "görünüm"],
@@ -283,6 +284,8 @@ def _brief_text(b):
              f"Amaç: {b.get('goal', '')}"]
     if b.get("audience"):
         lines.append(f"Kimin için: {b['audience']}")
+    if b.get("pages"):
+        lines.append("Sayfalar: " + ", ".join(b["pages"]))
     if b.get("features"):
         lines.append("Özellikler:")
         lines += [f"- {f}" for f in b["features"]]
@@ -332,9 +335,14 @@ def _brief_items(b):
 
 SKELETON = {
     "web": [
+        {"key": "isim", "q": "Sitenin / işletmenin adı ne olsun? (yaz ya da seç)", "options": ["sen uydur"]},
+        {"key": "sayfalar", "q": "Hangi sayfalar olsun?",
+         "options": ["tek sayfa (her şey alt alta)", "Hakkımızda", "Hizmetler / Menü / Ürünler", "Galeri", "İletişim", "Blog"],
+         "multi": True},
         {"key": "renk", "q": "Renk / tema nasıl olsun?", "options": ["mavi", "mor", "yeşil", "koyu tema", "sen seç"]},
-        {"key": "stil", "q": "Görünüm tarzı?", "options": ["sade ve modern", "büyük ve belirgin", "renkli / eğlenceli", "sen seç"]},
-        {"key": "veri", "q": "Sayfa yenilenince bilgiler kalsın mı?", "options": ["kalsın (tarayıcıda saklansın)", "gerekmez"]},
+        {"key": "stil", "q": "Görünüm tarzı?", "options": ["sade ve modern", "büyük ve belirgin", "renkli / eğlenceli", "lüks / şık", "sen seç"]},
+        {"key": "iletisim", "q": "Ziyaretçi sana nasıl ulaşsın?",
+         "options": ["iletişim formu", "WhatsApp butonu", "telefon + e-posta", "gerekmez"], "multi": True},
     ],
     "python": [
         {"key": "kullanim", "q": "Nasıl kullanılacak?", "options": ["fonksiyon olarak", "komut satırından", "ikisi de"]},
@@ -356,7 +364,7 @@ def _skeleton(kind, orig_req, all_answers, prefs, feature_q):
         if q["key"] in all_answers or q["key"] in prefs:
             continue
         out.append(dict(q))
-    return _filter_questions(out, orig_req, prefs)[:4]
+    return _filter_questions(out, orig_req, prefs)[:6]
 
 
 def _discover(orig_req, all_answers, prefs, kind, rnd, prev_qs, cancel):
@@ -417,7 +425,8 @@ def _make_brief(orig_req, all_answers, prefs, kind, cancel, prev=None, change=""
             "Bunlardan kıdemli bir geliştirici gibi net bir proje özeti çıkar. KURAL: müşterinin söylemediği renk, "
             "özellik veya amaç UYDURMA; 'sen seç' dediği yerde makul bir seçim yap ve '(senin için seçtim)' diye belirt; "
             "isteği olduğu gibi anla (sayaç = tıklayınca artan sayı). Türkçe, kısa ve somut: "
-            "title (3-6 kelime), goal (1 cümle, isteği olduğu gibi anlat), audience (kısa), "
+            "title (site/işletme adı; 'sen uydur' dediyse işe uygun özgün bir ad seç), goal (1 cümle, isteği olduğu gibi anlat), audience (kısa), "
+            "pages (sayfalar; 'tek sayfa' dediyse ['Ana sayfa'] ve bölümleri features'a yaz: ör. 'Hero', 'Menü bölümü'), "
             "features (3-7 madde: SADECE kullanıcının yapabileceği işlevler — renk/saklama gibi şeyler buraya girmez; "
             "müşterinin söylediği her işlev mutlaka olsun, söylemediği abartılı şeyler ekleme), "
             "look (renk/tema/stil/rakam boyutu tek cümle), behavior (2-4 madde: veri saklama, hatalı giriş, "
@@ -597,6 +606,12 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
             emit("done", ok=False, reason="model_error")
             return {"ok": False, "trace": trace, "history": history, "prefs": prefs}
         kind = _guess_kind(task_text, u.get("kind", "other"))
+        if kind == "python":
+            emit("answer", text=("coder-1 yalnızca **web sitesi** yapar (tanıtım sitesi, portföy, kafe/restoran, "
+                                 "mağaza vitrini, blog, küçük web uygulaması). Bu isteği bir web sayfası olarak "
+                                 "yapabilirim — istersen 'bunu web sitesi olarak yap' de, hemen sorularla başlayayım."))
+            emit("done", ok=True, steps=1)
+            return {"ok": True, "trace": trace, "history": history, "prefs": prefs}
         summary = u.get("summary") or task_text
         questions = _filter_questions(u.get("questions"), task_text, prefs)
     if stopped():
@@ -737,17 +752,19 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
         emit("phase", name="planla", text="planlıyorum")
         plan = brain.chat(history + [{"role": "user", "content": (
             f"Onaylı proje özeti:\n{summary}\nBu özetin TAMAMINI karşılayan, çalışan bir proje planla ve SADECE JSON ver. "
-            "files: " + ("tek bir index.html (CSS+JS içinde)" if kind == "web" else
+            "files: " + ("index.html + özetteki her ek sayfa için ayrı .html (ör. hakkimizda.html, iletisim.html) "
+                         "+ ortak style.css + script.js (en fazla 6 dosya; tek sayfalık site ise sadece index.html + style.css + script.js)" if kind == "web" else
                          "tek bir .py dosyası (içinde doctest)" if kind == "python" else "en fazla 3 dosya")
             + ". İstenmeyen ekstra dosya/arayüz ekleme. steps: 3-5 kısa adım. tests: nasıl doğrulanacağı (2-4 madde).")}],
             schema=PLAN_SCHEMA, max_tokens=600, cancel=cancel, model=brain.FAST_MODEL) or {}
-        files = [f for f in (plan.get("files") or []) if f.get("path")][:3]
+        files = [f for f in (plan.get("files") or []) if f.get("path")][:6]
         if kind == "python":
             files = [f for f in files if f["path"].endswith(".py")][:1]
         elif kind == "web":
-            files = [f for f in files if f["path"].endswith((".html", ".css", ".js"))]
-            if any(f["path"].endswith(".html") for f in files):
-                files = [f for f in files if f["path"].endswith(".html")][:1]
+            files = [f for f in files if f["path"].endswith((".html", ".css", ".js"))][:6]
+            if not any(f["path"] == "index.html" for f in files):
+                files = [{"path": "index.html", "purpose": "ana sayfa"}] + [f for f in files if not f["path"].endswith(".html")]
+            files.sort(key=lambda f: (0 if f["path"] == "index.html" else 1 if f["path"].endswith(".html") else 2))
         if not files:
             files = [{"path": "index.html" if kind == "web" else "main.py", "purpose": summary}]
         steps = plan.get("steps") or [f"{f['path']} dosyasını yaz" for f in files]
@@ -770,7 +787,13 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
                    "Tek bir kod bloğu içinde ver, açıklama yazma. Özetteki HER özellik ve detay "
                    "(renk, özellik, davranış, dil) kodda somut olarak bulunsun; kıdemli bir geliştirici gibi "
                    "temiz, çalışır, eksiksiz kod yaz; yer tutucu veya TODO yok."
-                   + (" Sayfa responsive olsun, tüm CSS ve JS aynı dosyada olsun." if path.endswith(".html") else "")
+                   + ((" Sayfa responsive olsun (telefon ve masaüstü). Gerçek, işe uygun Türkçe içerik yaz (lorem ipsum, 'örnek metin', "
+                       "sahte telefon/adres yerine özetle tutarlı metin); işletme adı özetteki başlık. "
+                       + ("Ortak CSS için <link rel='stylesheet' href='style.css'>, JS için <script src='script.js'></script> kullan; "
+                          "diğer sayfalara giden gezinme menüsü olsun (" + ", ".join(sorted(fp for fp in [x['path'] for x in files] if fp.endswith('.html'))) + ")."
+                          if any(x["path"].endswith((".css", ".js")) for x in files) or sum(x["path"].endswith(".html") for x in files) > 1
+                          else "Tüm CSS ve JS aynı dosyada olsun.")) if path.endswith(".html") else "")
+                   + (" Bu dosya diğer sayfaların kullandığı ortak dosya; HTML'deki sınıf/id adlarıyla birebir uyumlu olsun." if path.endswith((".css", ".js")) else "")
                    + (" Fonksiyonlara doctest ekle ve dosya sonuna `if __name__ == '__main__': import doctest; doctest.testmod()` koy." if path.endswith(".py") else "")
                    + (f"\nÖnceki dosyalar:{ctx}" if ctx else ""))
             acc = []
@@ -832,6 +855,11 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
                      + ("\nnot: " + "; ".join(notes) if notes else ""))
                 if not problems:
                     problems += _runtime(path)
+            elif path.endswith(".js"):
+                emit("tool", call={"name": "run_command", "args": {"cmd": f"node --check {path}"}})
+                js = _check_js([content], ws)
+                problems += js
+                emit("tool_result", name="run_command", out="JS sözdizimi " + ("OK" if not js else "HATA\n" + "\n".join(js)))
             elif path.endswith(".py"):
                 cmd = f"python3 -m py_compile {path} && python3 -m doctest {path} && echo DOCTEST_OK"
                 emit("tool", call={"name": "run_command", "args": {"cmd": cmd}})

@@ -114,6 +114,7 @@ const withTok = (p) =>
   p + (p.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(TOK);
 
 function showLogin() {
+  initGoogle();
   $("login").classList.remove("hidden");
   setTimeout(() => $("login-pass").focus(), 60);
 }
@@ -150,6 +151,42 @@ async function apiPost(path, body) {
   return r.json();
 }
 
+async function initGoogle() {
+  try {
+    const r = await fetch(API + "/api/auth/config");
+    const j = r.ok ? await r.json() : {};
+    if (!j.google_client_id) return;
+    await new Promise((ok, bad) => {
+      if (window.google && google.accounts) return ok();
+      const sc = document.createElement("script");
+      sc.src = "https://accounts.google.com/gsi/client"; sc.async = true; sc.defer = true;
+      sc.onload = ok; sc.onerror = bad; document.head.appendChild(sc);
+    });
+    google.accounts.id.initialize({ client_id: j.google_client_id, callback: onGoogleCred, ux_mode: "popup" });
+    const w = Math.min(320, Math.max(200, $("login-form").clientWidth - 48));
+    google.accounts.id.renderButton($("g-btn"), { theme: "filled_black", size: "large", width: w, text: "continue_with", locale: "tr" });
+    $("g-wrap").classList.remove("hidden");
+  } catch (e) { /* Google kapalı */ }
+}
+async function onGoogleCred(resp) {
+  try {
+    const r = await fetch(API + "/api/auth/google", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ credential: resp.credential }) });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok && j.token) {
+      TOK = j.token; localStorage.setItem("c1.tok", TOK);
+      if (j.name) localStorage.setItem("c1.name", j.name);
+      if (j.display) localStorage.setItem("c1.display", j.display);
+      hideLogin(); $("login-err").classList.add("hidden");
+      paintUser(); loadModel();
+    } else {
+      $("login-err").textContent = j.detail || "Google ile giriş başarısız";
+      $("login-err").classList.remove("hidden");
+    }
+  } catch (e) {
+    $("login-err").textContent = "sunucuya ulaşılamadı"; $("login-err").classList.remove("hidden");
+  }
+}
 let authMode = "login";
 $("login-mode").addEventListener("click", () => {
   authMode = authMode === "login" ? "register" : "login";
@@ -586,7 +623,7 @@ function newChat() {
 }
 function paintUser() {
   const n = NAME();
-  $("user-name").textContent = n || "—";
+  $("user-name").textContent = (n.startsWith("g:") && localStorage.getItem("c1.display")) || n.replace(/^g:/, "") || "—";
   $("user-avatar").textContent = (n[0] || "?").toUpperCase();
 }
 
@@ -881,7 +918,7 @@ function loadModel() {
       if (r.ok) {
         const m = r.params ? `${(r.params / 1e6).toFixed(0)}M` : "";
         pill.textContent = r.brain
-          ? `coder-1 · beyin: ${r.brain.replace("qwen2.5-coder:", "qwen2.5-coder ").toUpperCase().replace("QWEN2.5-CODER", "Qwen2.5-Coder")}`
+          ? `coder-1 · beyin: ${r.brain.replace("qwen2.5-coder:3b", "Qwen2.5-Coder 3B")}`
           : `model: ${r.model || "coder-1"}${m ? " · " + m : ""}`;
         pill.className = "pill pill-ok";
       } else {
