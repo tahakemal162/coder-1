@@ -17,98 +17,56 @@ let API = (() => {
 const EDGE = { id: "ecfg_tquihxfzp6zgddt2sx4vtfcpkwid", token: "db70e0dd-5fbd-4e73-8235-a036551c77a7" };
 const API_PINNED = !!localStorage.getItem("coder1.api") || /^https?:\/\/(localhost|127\.)/.test(location.origin);
 let _resolvedAt = 0;
+const ORIGIN_API = location.origin.replace(/\/+$/, "");
+function timeoutSignal(ms) {            // eski Safari'de AbortSignal.timeout yok
+  if (AbortSignal.timeout) return AbortSignal.timeout(ms);
+  const c = new AbortController(); setTimeout(() => c.abort(), ms); return c.signal;
+}
 async function resolveBackend(force) {
   if (API_PINNED || !EDGE.id) return false;
   if (!force && Date.now() - _resolvedAt < 15000) return false;
   _resolvedAt = Date.now();
   try {
     const r = await fetch(`https://edge-config.vercel.com/${EDGE.id}/item/backend`,
-      { headers: { Authorization: "Bearer " + EDGE.token }, signal: AbortSignal.timeout(4000) });
+      { headers: { Authorization: "Bearer " + EDGE.token }, signal: timeoutSignal(4000) });
     const u = await r.json();
     if (typeof u !== "string" || !/^https?:\/\//.test(u)) return false;
     const base = u.replace(/\/+$/, "");
     if (base === API) return false;
-    const h = await fetch(base + "/healthz", { signal: AbortSignal.timeout(6000) }).catch(() => null);
+    const h = await fetch(base + "/healthz", { signal: timeoutSignal(6000) }).catch(() => null);
     if (h && h.ok) { API = base; return true; }
   } catch { /* edge yok → aynı origin'den devam */ }
   return false;
 }
-const backendReady = resolveBackend(true);
+const backendReady = resolveBackend(true).catch(() => false);
+const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms));
+/* Dayanıklı istek: doğrudan adres ölüyse Vercel yolunu (aynı origin) dener,
+ * tünel yenileniyorsa birkaç saniye bekleyip güncel adresi tekrar çözer. */
 async function fetchApi(path, init) {
   await backendReady;
-  const go = () => fetch(API + path, init);
-  let r = null, err = null;
-  try { r = await go(); } catch (e) { err = e; }
-  if (r && r.status < 502) return r;
-  if (await resolveBackend(true)) {        // adres değişmiş → yeni adrese tekrar dene
-    try { return await go(); } catch (e) { err = e; }
+  let lastErr = null, lastRes = null;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const bases = API_PINNED ? [API] : [API, ORIGIN_API].filter((b, i, a) => a.indexOf(b) === i);
+    for (const base of bases) {
+      let r = null;
+      try { r = await fetch(base + path, init); } catch (e) { lastErr = e; continue; }
+      if (r.status < 502) { if (base !== API && !API_PINNED) API = base; return r; }
+      lastRes = r;
+    }
+    if (attempt < 3) {
+      if (attempt > 0) addBannerSafe("sunucuya yeniden bağlanıyorum…");
+      await sleep(2500 * (attempt + 1));
+      await resolveBackend(true);
+    }
   }
-  if (r) return r;
-  throw err;
+  if (lastRes) return lastRes;
+  throw lastErr || new Error("ağ hatası");
 }
-
-const POLL_MS = 1500;
-const $ = (id) => document.getElementById(id);
-const chatLog = $("chat-log"), termLog = $("term-log"), tree = $("file-tree");
-const input = $("input"), btnSend = $("btn-send"), runBar = $("run-bar");
-const el = (tag, cls, text) => {
-  const n = document.createElement(tag);
-  if (cls) n.className = cls;
-  if (text != null) n.textContent = text;
-  return n;
-};
-
-const S = {
-  taskId: null,
-  seen: 0,
-  running: false,
-  timer: null,
-  pollTimer: null,
-  startAt: 0,
-  steps: 0,
-  sawStep: false,
-  todos: new Map(),      // i -> {state, text?}
-  todoCard: null,
-  sawContent: false,     // görünür cevap/araç geldi mi
-  currentFile: null,
-  fileCache: new Map(),  // path -> content
-  autoOpened: false,
-  awaiting: null,       // açık soru kartı {answers, questions, card}
-  status: "idle",
-};
-const APP = document.querySelector(".app");
-const NAME = () => localStorage.getItem("c1.name") || "";
-const PHASES = { anla: "isteği anlıyor", planla: "planlıyor", yaz: "kod yazıyor",
-  dogrula: "test ediyor", onar: "hatayı düzeltiyor", duzenle: "projeyi düzenliyor", rapor: "raporluyor" };
-
-/* ---------- yardımcılar ---------- */
-
-const esc = (s) => String(s ?? "");
-
-/* ---------- giriş (parola) ---------- */
-
-let TOK = localStorage.getItem("c1.tok") || "";
-const withTok = (p) =>
-  p + (p.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(TOK);
-
-function showLogin() {
-  $("login").classList.remove("hidden");
-  setTimeout(() => $("login-pass").focus(), 60);
-}
-function hideLogin() {
-  const l = $("login");
-  if (l.classList.contains("hidden")) return;
-  l.classList.add("leaving");
-  setTimeout(() => { l.classList.remove("leaving"); l.classList.add("hidden"); }, 350);
-}
-
-function authFail(r) {
-  if (r.status === 401) {
-    TOK = ""; localStorage.removeItem("c1.tok");
-    showLogin();
-    return true;
-  }
-  return false;
+let _bannerAt = 0;
+function addBannerSafe(t) {
+  if (Date.now() - _bannerAt < 8000) return;
+  _bannerAt = Date.now();
+  try { addBanner("warn", t); } catch { /* UI henüz hazır değil */ }
 }
 
 async function apiGet(path) {
