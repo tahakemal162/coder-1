@@ -112,6 +112,8 @@ class Workspace:
         for dp, dns, fns in os.walk(base):
             dns[:] = [d for d in dns if d not in SKIP_DIRS]
             for f in fns:
+                if f.startswith("_onizleme"):
+                    continue
                 out.append(os.path.relpath(os.path.join(dp, f), self.root))
         return sorted(out)[:500]
 

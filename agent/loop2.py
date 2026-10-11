@@ -369,6 +369,10 @@ def _discover(orig_req, all_answers, prefs, kind, rnd, prev_qs, cancel):
         "(c) ekstra davranış (ör. 'sayfa yenilenince değer kalsın / ses-animasyon / klavye kısayolu'). "
         "Basit bir uygulama için 'kimin için' ya da 'amaç' sorma; isteğin ne olduğu zaten belli."
         if rnd == 1 else
+        "2. tur: bu TÜR projeye özgü, henüz sorulmamış 2 DERİN detay sorusu üret (ör. sayaç → başlangıç değeri, "
+        "artış adımı, klavye kısayolu, ses/animasyon; yapılacaklar → öncelik, bitiş tarihi, kategori; oyun → zorluk, "
+        "skor kaydı). Zaten cevaplanan ya da önceki tur sorulan konuları (özellik, renk, görünüm, veri saklama) "
+        "yeniden sorma. complete=false." if rnd == 2 else
         "Sadece hâlâ boş kalan başlıkları sor; önceki cevapları yeniden sorma. Her şey netse questions boş, complete=true.")
     try:
         r = brain.chat([{"role": "user", "content": (
@@ -386,7 +390,7 @@ def _discover(orig_req, all_answers, prefs, kind, rnd, prev_qs, cancel):
             schema=DISCOVER_SCHEMA, max_tokens=600, temperature=0.3, cancel=cancel, model=brain.FAST_MODEL) or {}
     except Exception:
         return []
-    if r.get("complete") and rnd > 1:
+    if r.get("complete") and rnd > 2:
         return []
     qs = _filter_questions(r.get("questions"), orig_req, prefs)
     seen = {q.get("q", "").strip().lower() for q in prev_qs}
@@ -553,7 +557,7 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
     existing = _project_files(workdir)
     revision = bool(done_before and existing and not answers)
 
-    brief = None
+    brief = briefs[-1] if (revision and briefs) else None
     summary = task_text
     questions = []
     if revision:
@@ -700,6 +704,11 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
                     emit("tool_result", name="run_command", out=d[:2000])
             except Exception:
                 pass
+            if brief:
+                brief = dict(brief)
+                brief["behavior"] = list(brief.get("behavior") or []) + [task_text.strip()[:120]]
+                history.append({"role": "assistant", "content": BRIEF_MARK + json.dumps(brief, ensure_ascii=False)})
+                emit("tool_result", name="edit_file", out="özet güncellendi: bu değişiklik de artık projenin maddesi")
     else:
         # ---------- 2. planla ----------
         emit("phase", name="planla", text="planlıyorum")
@@ -837,8 +846,16 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
         except Exception:
             missing = []
         allcode = "\n".join(written.values())
+        low_items = {x.lower(): x for x in items}
+        missing = [low_items.get(m.lower(), m) for m in missing]
+        missing = [m for m in missing if m in items or any(
+            m.lower() in x.lower() or x.lower() in m.lower() for x in items)]
         for it in items:
             d = _det_check(it, allcode)
+            if d is None:
+                words = [w for w in re.findall(r"\w+", it.lower()) if len(w) >= 4]
+                if words and all(w[:5] in allcode.lower() for w in words):
+                    d = True
             if d is True and it in missing:
                 missing.remove(it)
             elif d is False and it not in missing:
