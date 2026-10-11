@@ -48,9 +48,14 @@ def _providers():
     ork = os.environ.get("OPENROUTER_API_KEY", "").strip()
     gmk = os.environ.get("GEMINI_API_KEY", "").strip()
     OR = "https://openrouter.ai/api/v1/chat/completions"
-    if ork and os.environ.get("C1_OR_OPUS", "1") == "1":
+    if ork and os.environ.get("C1_OR_OPUS", "0") == "1":
         out.append({"id": "or-opus", "label": "Claude Opus 5.5 (OpenRouter)", "kind": "openai", "url": OR, "key": ork,
                     "model": "anthropic/claude-opus-5.5"})
+    if ork:
+        out.append({"id": "or-super", "label": "Nemotron 3 Super 120B", "kind": "openai", "url": OR, "key": ork,
+                    "model": "nvidia/nemotron-3-super-120b-a12b:free"})
+        out.append({"id": "or-ultra", "label": "Nemotron 3 Ultra 550B", "kind": "openai", "url": OR, "key": ork,
+                    "model": "nvidia/nemotron-3-ultra-550b-a55b:free"})
     ank = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     if ank:
         out.append({"id": "an-opus", "label": "Claude Opus 5.5", "kind": "anthropic",
@@ -70,11 +75,6 @@ def _providers():
         out.append({"id": "gm-flash", "label": "Gemini Flash", "kind": "gemini", "url": GM, "key": gmk,
                     "model": "gemini-flash-latest"})
     if ork:
-        out.append({"id": "or-super", "label": "Nemotron 3 Super 120B", "kind": "openai", "url": OR, "key": ork,
-                    "model": "nvidia/nemotron-3-super-120b-a12b:free"})
-        out.append({"id": "or-ultra", "label": "Nemotron 3 Ultra 550B", "kind": "openai", "url": OR, "key": ork,
-                    "model": "nvidia/nemotron-3-ultra-550b-a55b:free"})
-    if ork:
         out.append({"id": "or-gemma31", "label": "Gemma 4 31B", "kind": "openai", "url": OR, "key": ork,
                     "model": "google/gemma-4-31b-it:free"})
         out.append({"id": "or-gemma26", "label": "Gemma 4 26B", "kind": "openai", "url": OR, "key": ork,
@@ -85,14 +85,29 @@ def _providers():
 
 
 PROVIDERS = _providers()
-_COOL = {}          # id -> yeniden deneme zamanı
+_COOL_FILE = os.environ.get("C1_COOL_FILE", os.path.expanduser("~/c1run/brain_cool.json"))
+try:
+    _COOL = {k: float(v) for k, v in json.load(open(_COOL_FILE)).items()}   # id -> yeniden deneme zamanı
+except Exception:
+    _COOL = {}
 _LAST = ["yerel"]
 
 
+def _save_cool():
+    try:
+        os.makedirs(os.path.dirname(_COOL_FILE), exist_ok=True)
+        json.dump(_COOL, open(_COOL_FILE, "w"))
+    except Exception:
+        pass
+
+
 def current_label():
+    """Rozet: en son gerçekten cevap veren model; henüz çağrı yoksa dinlenmede olmayan ilk model."""
     if not PROVIDERS:
         return BRAIN_MODEL
     live = [p["label"] for p in PROVIDERS if _COOL.get(p["id"], 0) <= time.time()]
+    if _LAST[0] != "yerel" and _LAST[0] in live:
+        return _LAST[0] + " (bulut)"
     return (live[0] + " (bulut)") if live else BRAIN_MODEL + " (yerel yedek)"
 
 
@@ -197,6 +212,7 @@ def _cloud(messages, max_tokens, temperature, schema, on_delta, cancel, timeout)
                 pass
             daily = "per-day" in body or "exceeded your current quota" in body or "credit balance" in body or "402" in msg
             _COOL[p["id"]] = time.time() + (3600 if daily else COOLDOWN)
+            _save_cool()
             print(f"[brain] {p['id']} düştü{' (günlük kota, 1 saat dinlenir)' if daily else ''}: {msg[:100]}",
                   file=sys.stderr, flush=True)
     return None
