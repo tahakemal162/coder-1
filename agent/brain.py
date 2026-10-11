@@ -269,6 +269,9 @@ def chat(messages, max_tokens=1200, temperature=0.3, schema=None,
         txt = _cloud(messages, max_tokens, temperature, schema, on_delta, cancel, timeout)
         if txt is not None:
             return _parse(txt, schema)
+        if not available():
+            raise RuntimeError("bulut modellerin hepsi şu an kota/hata verdi, yerel yedek bu sunucuda yok; "
+                               "birkaç dakika sonra tekrar dene")
     if not _acquire(cancel):
         raise RuntimeError("iptal edildi")
     try:

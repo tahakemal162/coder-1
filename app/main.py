@@ -13,7 +13,17 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import serve.server as srv
+if os.environ.get("C1_NO_LOCAL") == "1":
+    # Render gibi küçük sunucu: yerel model/torch yok, sadece bulut beyin zinciri
+    import types as _types
+    from fastapi import FastAPI as _F
+    srv = _types.SimpleNamespace(app=_F(title="coder-1"))
+
+    @srv.app.get("/healthz")
+    def _hz():
+        return {"ok": True, "model": "coder-1", "params": 0}
+else:
+    import serve.server as srv
 import agent.main as agent_mod
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,9 +32,10 @@ _here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CKPT = os.environ.get("C1_CKPT", os.path.join(_here, "deploy", "artifacts"))
 TOKD = os.environ.get("C1_TOK", os.path.join(CKPT, "tok"))
 
-srv.TOK = srv.BPE.load(TOKD)
-srv.MODEL = srv.CoderModel.load(CKPT, device=srv.DEVICE)
-srv.MODEL.eval()
+if os.environ.get("C1_NO_LOCAL") != "1":
+    srv.TOK = srv.BPE.load(TOKD)
+    srv.MODEL = srv.CoderModel.load(CKPT, device=srv.DEVICE)
+    srv.MODEL.eval()
 
 app = FastAPI(title="coder-1", lifespan=agent_mod._lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"],
@@ -40,10 +51,18 @@ from fastapi.responses import JSONResponse
 
 USERS_FILE = os.environ.get("C1_USERS", "/home/ubuntu/c1run/users.json")
 TOKENS_FILE = USERS_FILE.replace("users.json", "tokens.json")
+from agent import store as _store  # noqa: E402  (kalıcı depo: Render'da disk silinir)
 try:
     TOKENS = _json.load(open(TOKENS_FILE))   # yeniden başlatmada oturumlar düşmesin
 except Exception:
     TOKENS = {}
+if _store.enabled():
+    TOKENS.update(_store.load_json("tokens.json", {}))
+    if not os.path.exists(USERS_FILE):
+        _u0 = _store.load_json("users.json", None)
+        if _u0:
+            os.makedirs(os.path.dirname(USERS_FILE), exist_ok=True)
+            _json.dump(_u0, open(USERS_FILE, "w"))
 # ajan döngüsünün aynı süreçteki /v1 çağrıları için dahili token (dışarı çıkmaz)
 _INTERNAL = secrets.token_hex(24)
 TOKENS[_INTERNAL] = "__internal__"
@@ -63,6 +82,7 @@ def _save_users(u):
     tmp = USERS_FILE + ".tmp"
     _json.dump(u, open(tmp, "w"))
     os.replace(tmp, USERS_FILE)
+    _store.save_json_async("users.json", u)
 
 
 def _hash(pw, salt):
@@ -87,6 +107,7 @@ def _issue(name):
         persist = {k: v for k, v in TOKENS.items() if v != "__internal__"}
         _json.dump(persist, open(TOKENS_FILE + ".tmp", "w"))
         os.replace(TOKENS_FILE + ".tmp", TOKENS_FILE)
+        _store.save_json_async("tokens.json", persist)
     except OSError:
         pass
     return {"token": tok, "name": name}
@@ -123,6 +144,7 @@ def feedback(body: dict):
            "user": (body.get("name") or "")[:32]}
     try:
         open(FB_FILE, "a").write(_json.dumps(row, ensure_ascii=False) + "\n")
+        _store.append_line("feedback.jsonl", _json.dumps(row, ensure_ascii=False) + "\n")
         return {"ok": True}
     except Exception as e:
         return JSONResponse({"detail": str(e)}, 500)

@@ -1,0 +1,15 @@
+# coder-1 backend — Render (ücretsiz, 512 MB): yerel model yok, bulut beyin zinciri + tarayıcı testi
+FROM python:3.11-slim
+ENV PYTHONUNBUFFERED=1 PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN apt-get update && apt-get install -y --no-install-recommends nodejs ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir fastapi uvicorn pydantic requests playwright==1.63.0 \
+ && playwright install --with-deps chromium-headless-shell \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY agent /app/agent
+COPY app /app/app
+COPY web /app/web
+ENV C1_NO_LOCAL=1 CODER1_NO_DOCKER=1 C1_USERS=/data/users.json C1_FB=/data/feedback.jsonl \
+    CODER1_WORK=/data/work PORT=10000
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-10000} --log-level warning"]

@@ -35,6 +35,7 @@ from pydantic import BaseModel
 from agent.computer import docker_status, start_sandbox, cleanup_stale_containers
 from agent.loop import agent_task
 from agent import brain as _brain
+from agent import store
 from agent.loop2 import agent_task2
 from agent.workspace import Workspace
 
@@ -69,7 +70,7 @@ def _load_prefs(name):
         with open(_prefs_path(name)) as f:
             return json.load(f)
     except (OSError, ValueError):
-        return {}
+        return store.load_json("prefs/" + os.path.basename(_prefs_path(name)), {})
 
 
 def _save_prefs(name, prefs):
@@ -77,6 +78,7 @@ def _save_prefs(name, prefs):
         os.makedirs(PREFS_DIR, exist_ok=True)
         with open(_prefs_path(name), "w") as f:
             json.dump(prefs, f, ensure_ascii=False)
+        store.save_json_async("prefs/" + os.path.basename(_prefs_path(name)), prefs)
     except OSError:
         pass
 
@@ -117,6 +119,7 @@ def _run(tid, text, workdir, answers=None):
         T["events"].append({"t": "error", "text": str(e)[:500]})
     finally:
         T["last_activity"] = time.time()
+        store.push_workdir_async(tid, workdir)
         try:
             sb.close()
         except Exception:
@@ -291,6 +294,9 @@ def _workdir_of(tid):
     for d in (os.path.join(WORK_ROOT, tid), os.path.join(ARCHIVE_DIR, tid)):
         if os.path.isdir(d):
             return d
+    d = os.path.join(ARCHIVE_DIR, tid)
+    if store.pull_workdir(tid, d):
+        return d
     return None
 
 
