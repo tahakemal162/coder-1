@@ -226,3 +226,6 @@ a{color:var(--accent);text-decoration:none;cursor:pointer}
 
 .msg-brief .msg-body{background:linear-gradient(180deg,rgba(34,211,238,.06),rgba(168,85,247,.06));border:1px solid var(--line-2);border-radius:14px;padding:14px 16px 14px 52px}
 .msg-brief .msg-body ul{margin:4px 0 8px 18px}
+
+.msg-shot .msg-body { padding: 8px 8px 8px 52px; }
+.shot-img { max-width: 100%; border-radius: 12px; border: 1px solid var(--line-2); display: block; }

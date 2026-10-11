@@ -14,6 +14,7 @@ import tempfile
 import time
 
 from . import brain
+from . import runtime_check
 from .workspace import Workspace
 
 MAX_REPAIR = 2
@@ -237,7 +238,7 @@ COVERAGE = {
     "other": ["amaç", "ana özellikler", "girdi/çıktı", "görünüm"],
 }
 CONFIRM_Q = {"key": "onay", "q": "Böyle başlayayım mı?",
-             "options": ["Evet, böyle başla", "Birkaç şeyi değiştirmek istiyorum"]}
+             "options": ["Evet, böyle başla", "Evet ama önerilerini çıkar", "Birkaç şeyi değiştirmek istiyorum"]}
 CONFIRM_INTRO = "Her şeyi doğru anladım mı? Onaylarsan bundan sonra soru sormam; projeyi baştan sona ben götürürüm."
 APPROVE_RE = re.compile(r"^\s*(evet|tamam|ok|okey|olur|başla|basla|aynen|onay|devam|hadi|yap)\b", re.I)
 
@@ -604,14 +605,29 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
     if not revision:
         if briefs:
             brief = briefs[-1]
-            if not _is_approval(answers, task_text):
-                change = task_text if not answers else " ".join(
-                    str(v) for k, v in answers.items() if k != "onay" and str(v).strip())
-                if not change.strip() or change.strip().startswith("Birkaç şeyi değiştirmek"):
-                    emit("ask", questions=[{"key": "degisiklik", "q": "Neyi değiştirelim? Kısaca yaz.", "options": []}],
-                         intro="Tamam, özeti birlikte düzeltelim.", summary=brief.get("title", ""))
+            onay_txt = str((answers or {}).get("onay", "")).strip().lower()
+            if onay_txt.startswith("evet ama"):
+                brief = dict(brief)
+                brief["features"] = [f for f in brief.get("features") or [] if "(önerim)" not in f]
+                history.append({"role": "assistant", "content": BRIEF_MARK + json.dumps(brief, ensure_ascii=False)})
+                emit("answer", text="Önerilerimi çıkardım; sadece senin dediklerinle, soru sormadan başlıyorum.")
+            elif not _is_approval(answers, task_text):
+                cikar = str((answers or {}).get("cikar", "")).strip()
+                serbest = " ".join(str(v) for k, v in (answers or {}).items()
+                                   if k not in ("onay", "cikar") and str(v).strip()) if answers else task_text
+                if not answers or (not cikar and (not serbest.strip() or serbest.strip().startswith("Birkaç şeyi"))):
+                    items = _brief_items(brief)[:8]
+                    emit("ask", questions=[
+                        {"key": "cikar", "q": "Çıkarmak istediğin maddeler (tıkla):", "options": items, "multi": True},
+                        {"key": "degisiklik", "q": "Eklenecek / değişecek bir şey varsa yaz:", "options": []}],
+                        intro="Tamam, özeti birlikte düzeltelim.", summary=brief.get("title", ""))
                     return {"ok": True, "waiting": True, "trace": trace, "history": history, "prefs": prefs}
+                change = ((f"ŞUNLARI ÇIKAR: {cikar}. " if cikar else "") + serbest).strip()
                 brief = _make_brief(orig_req, all_answers, prefs, kind, cancel, prev=brief, change=change)
+                if cikar:
+                    drop = [x.strip().lower() for x in cikar.split(" + ")]
+                    for fld in ("features", "behavior"):
+                        brief[fld] = [f for f in brief.get(fld) or [] if f.strip().lower() not in drop]
                 if len(briefs) < MAX_BRIEF_EDITS:
                     return ask_confirm(brief)
                 emit("answer", text="Değişikliği özete işledim; artık soru sormadan başlıyorum.")
@@ -624,7 +640,11 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
                 feat = next((q for q in questions if q.get("key") == "ozellik"), questions[0] if questions else None)
                 questions = _skeleton(kind, orig_req, all_answers, prefs, feat)
             elif rnd == 2 and not very_detailed:
-                questions = [FINAL_Q]
+                prev_qs = [q for a in asks for q in (a.get("questions") or [])]
+                deep = _discover(orig_req, all_answers, prefs, kind, 2, prev_qs, cancel)
+                known = set(all_answers) | set(prefs) | {"ozellik", "renk", "stil", "veri", "ek", "onay"}
+                deep = [q for q in deep if q.get("key") not in known][:2]
+                questions = deep + [FINAL_Q]
             else:
                 questions = []
             if questions:
@@ -735,6 +755,24 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
             emit("todo", i=min(i, len(steps) - 1), state="done", text=steps[min(i, len(steps) - 1)])
 
     # ---------- 4. doğrula + onar ----------
+    def _runtime(path):
+        """Gerçek tarayıcıda aç, butonlara tıkla; hataları döndür, ekran görüntüsü yayınla."""
+        if not path.endswith(".html"):
+            return []
+        emit("tool", call={"name": "run_command", "args": {"cmd": f"browser-test {path}"}})
+        rc = runtime_check.check_html(os.path.join(workdir, path), workdir)
+        if rc is None:
+            emit("tool_result", name="run_command", out="tarayıcı testi: ortam yok, atlandı")
+            return []
+        if rc["shot"]:
+            emit("shot", path=runtime_check.SHOT_NAME)
+        if rc["ok"]:
+            emit("tool_result", name="run_command",
+                 out=f"tarayıcıda açıldı · {rc['clicked']} buton denendi · çalışma hatası yok")
+            return []
+        emit("tool_result", name="run_command", out="tarayıcı testi:\n" + "\n".join(rc["errors"]))
+        return [e for e in rc["errors"] if not e.startswith("tarayıcı testi")]
+
     emit("phase", name="dogrula", text="test ediyorum")
     tested = []
     must = _user_keywords(orig_req + " " + " ".join(str(v) for v in all_answers.values()), answers)
@@ -756,6 +794,8 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
                      out="HTML yapısı " + ("OK" if not hard else "; ".join(hard))
                      + (" · JS sözdizimi " + ("OK" if not js else "HATA\n" + "\n".join(js)) if scripts else "")
                      + ("\nnot: " + "; ".join(notes) if notes else ""))
+                if not problems:
+                    problems += _runtime(path)
             elif path.endswith(".py"):
                 cmd = f"python3 -m py_compile {path} && python3 -m doctest {path} && echo DOCTEST_OK"
                 emit("tool", call={"name": "run_command", "args": {"cmd": cmd}})
@@ -823,6 +863,8 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
             if okfix and path.endswith(".html"):
                 pr, sc = _check_html(newc, [])
                 okfix = not [x for x in pr if not x.startswith("kullanıcının")] and not _check_js(sc, ws)
+                if okfix:
+                    okfix = not _runtime(path)
             if okfix and path.endswith(".py"):
                 ws.write(path, newc)
                 okfix = "DOCTEST_OK" in ws.run(f"python3 -m py_compile {path} && python3 -m doctest {path} && echo DOCTEST_OK",

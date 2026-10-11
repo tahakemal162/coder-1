@@ -100,7 +100,7 @@ const S = {
 };
 const APP = document.querySelector(".app");
 const NAME = () => localStorage.getItem("c1.name") || "";
-const PHASES = { anla: "isteği anlıyor", planla: "planlıyor", yaz: "kod yazıyor",
+const PHASES = { sira: "sırada bekliyor", kontrol: "özeti kodda kontrol ediyor", anla: "isteği anlıyor", planla: "planlıyor", yaz: "kod yazıyor",
   dogrula: "test ediyor", onar: "hatayı düzeltiyor", duzenle: "projeyi düzenliyor", rapor: "raporluyor" };
 
 /* ---------- yardımcılar ---------- */
@@ -403,6 +403,15 @@ function onEvent(ev) {
     case "file":
       openCanvas(); refreshFiles(true);
       break;
+    case "shot": {
+      welcomeGone();
+      const m = addMsg("msg-answer msg-shot", "");
+      const img = document.createElement("img");
+      img.className = "shot-img"; img.alt = "tarayıcı testi ekran görüntüsü";
+      img.src = API + withTok(`/api/task/${S.taskId}/raw?path=${encodeURIComponent(ev.path)}`) + "&t=" + Date.now();
+      m.querySelector(".msg-body").appendChild(img);
+      break;
+    }
     case "brief": {
       welcomeGone();
       const m = addMsg("msg-answer msg-brief", "");
