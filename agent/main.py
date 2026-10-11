@@ -17,6 +17,8 @@ Sözleşme: aynı endpoint isimleri + aynı olay tipleri, sadece ekleme.
 """
 import json
 import os
+import re
+import urllib.parse
 import sys
 import threading
 import time
@@ -25,7 +27,7 @@ from contextlib import asynccontextmanager
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from fastapi import FastAPI
+from fastapi import Request, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
@@ -267,35 +269,65 @@ def list_tasks():
 
 @app.get("/api/task/{tid}/files")
 def files(tid: str):
-    T = TASKS.get(tid)
-    if not T:
+    wd = _workdir_of(tid)
+    if not wd:
         return {"files": []}
-    return {"files": Workspace(T["workdir"]).list_files()}
+    return {"files": Workspace(wd).list_files()}
 
 
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
+
+
+_LOCAL_REF = re.compile(r"""(\b(?:src|href)\s*=\s*)(["'])(?!https?:|//|#|mailto:|tel:|data:|javascript:)([^"'?#]+)(#[^"']*)?\2""", re.I)
+
+
+def _workdir_of(tid):
+    """Görev bellekte yoksa (sunucu yeniden başlamış) diskteki çalışma alanını bul."""
+    T = TASKS.get(tid)
+    if T:
+        return T["workdir"]
+    if not re.fullmatch(r"[A-Za-z0-9_-]{4,64}", tid or ""):
+        return None
+    for d in (os.path.join(WORK_ROOT, tid), os.path.join(ARCHIVE_DIR, tid)):
+        if os.path.isdir(d):
+            return d
+    return None
 
 
 @app.get("/api/task/{tid}/raw")
-def raw_file(tid: str, path: str):
-    """önizleme: üretilen dosyayı ham içerikle servisler (iframe/HTML için)."""
-    T = TASKS.get(tid)
-    if not T:
+def raw_file(tid: str, path: str, request: Request):
+    """önizleme: üretilen dosyayı ham içerikle servisler; HTML'deki yerel css/js/sayfa bağlantıları
+    aynı uç noktaya (token'lı) yönlendirilir ki iframe'de stil ve sayfalar arası geçiş çalışsın."""
+    wd = _workdir_of(tid)
+    if not wd:
         return {"error": "yok"}
     try:
-        ws = Workspace(T["workdir"])
-        return FileResponse(ws._abs(path))
+        ws = Workspace(wd)
+        fp = ws._abs(path)
+        if not path.lower().endswith((".html", ".htm")):
+            return FileResponse(fp)
+        html = open(fp, encoding="utf-8", errors="replace").read()
+        tok = request.query_params.get("token", "")
+        base = path.rsplit("/", 1)[0] + "/" if "/" in path else ""
+
+        def _sub(m):
+            target = m.group(3).strip()
+            rel = os.path.normpath(base + target).replace("\\", "/").lstrip("./")
+            q = f"raw?path={urllib.parse.quote(rel)}" + (f"&token={urllib.parse.quote(tok)}" if tok else "")
+            return f'{m.group(1)}{m.group(2)}{q}{m.group(4) or ""}{m.group(2)}'
+
+        return HTMLResponse(_LOCAL_REF.sub(_sub, html))
     except Exception as e:
         return {"error": str(e)}
 
 
 @app.get("/api/task/{tid}/file")
 def file(tid: str, path: str):
-    T = TASKS.get(tid)
-    if not T:
+    wd = _workdir_of(tid)
+    if not wd:
         return {"error": "yok"}
     try:
-        return {"path": path, "content": Workspace(T["workdir"]).read(path)}
+        return {"path": path, "content": Workspace(wd).read(path)}
     except Exception as e:
         return {"error": str(e)}
 
