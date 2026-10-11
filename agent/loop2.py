@@ -398,6 +398,13 @@ def _discover(orig_req, all_answers, prefs, kind, rnd, prev_qs, cancel):
     return qs[:4]
 
 
+_TRMAP = str.maketrans("çşığöüÇŞİĞÖÜ", "csigoucsigou")
+
+
+def _tr(x):
+    return str(x).lower().translate(_TRMAP)
+
+
 def _make_brief(orig_req, all_answers, prefs, kind, cancel, prev=None, change=""):
     ctx = (f"Müşterinin isteği: {orig_req}\n"
            f"Keşif cevapları: {json.dumps(all_answers, ensure_ascii=False) or '—'}\n"
@@ -429,20 +436,20 @@ def _make_brief(orig_req, all_answers, prefs, kind, cancel, prev=None, change=""
         b["look"] = ", ".join(look)
     ozl = str(all_answers.get("ozellik", "")).strip()
     user_feats = [x.strip() for x in re.split(r"\s*\+\s*|\s*,\s*|\s*/\s*", ozl) if x.strip()] if ozl else []
-    said = (orig_req + " " + " ".join(str(v) for v in all_answers.values())).lower()
+    said = _tr(orig_req + " " + " ".join(str(v) for v in all_answers.values()))
     def _said(f):
-        toks = [t for t in re.findall(r"\w+", f.lower()) if len(t) >= 4]
+        toks = [t for t in re.findall(r"\w+", _tr(f)) if len(t) >= 4]
         return bool(toks) and sum(t[:5] in said for t in toks) >= max(1, len(toks) // 2)
-    utoks = set(t for u in user_feats for t in re.findall(r"\w+", u.lower()))
+    utoks = set(t for u in user_feats for t in re.findall(r"\w+", _tr(u)))
     ustems = {t[:5] for t in utoks if len(t) >= 4}
     extras = [f for f in (b.get("features") or [])
               if f.lower() not in [u.lower() for u in user_feats] and not _said(f)
-              and not any(t[:5] in ustems for t in re.findall(r"\w+", f.lower()) if len(t) >= 4)]
+              and not any(t[:5] in ustems for t in re.findall(r"\w+", _tr(f)) if len(t) >= 4)]
     kept = [f for f in (b.get("features") or []) if f not in extras
             and not (len(re.findall(r"\w+", f)) > 1
-                     and set(re.findall(r"\w+", f.lower())) <= utoks)
-            and not any(t[:5] in ustems for t in re.findall(r"\w+", f.lower()) if len(t) >= 4)]
-    ftoks = {t[:5] for f in kept + user_feats for t in re.findall(r"\w+", str(f).lower()) if len(t) >= 4}
+                     and set(re.findall(r"\w+", _tr(f))) <= utoks)
+            and not any(t[:5] in ustems for t in re.findall(r"\w+", _tr(f)) if len(t) >= 4)]
+    ftoks = {t[:5] for f in kept + user_feats for t in re.findall(r"\w+", _tr(f)) if len(t) >= 4}
     b["out_of_scope"] = [o for o in (b.get("out_of_scope") or [])
                          if "arayüz" not in str(o).lower() and "tasarım" not in str(o).lower()
                          and not any(t[:5] in ftoks for t in re.findall(r"\w+", str(o).lower()) if len(t) >= 4)][:3]
@@ -927,7 +934,9 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
             else:
                 ws.write(path, before)
                 emit("tool_result", name="edit_file", out="tamamlama testi geçemedi, önceki sürüm korundu")
-        checklist = [(x, x not in missing) for x in items]
+        _n = lambda x: re.sub(r"\s*\(önerim\)\s*$", "", str(x)).strip().lower()
+        _miss = {_n(m) for m in missing}
+        checklist = [(x, _n(x) not in _miss) for x in items]
 
     # ---------- 5. raporla ----------
     emit("phase", name="rapor", text="raporluyorum")
