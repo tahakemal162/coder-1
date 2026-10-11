@@ -5,6 +5,7 @@ import os
 import threading
 
 SHOT_NAME = "_onizleme.png"
+SHOT_MOBILE = "_onizleme_mobil.png"
 _LOCK = threading.Lock()          # CPU'da tek tarayıcı yeter
 
 
@@ -65,6 +66,27 @@ def check_html(path, workdir, max_buttons=12, timeout_ms=15000):
                         pass
                 pg.keyboard.press("Enter")
                 pg.wait_for_timeout(300)
+                # kırık yerel görseller
+                try:
+                    broken = pg.evaluate("""[...document.images].filter(i => i.complete && i.naturalWidth === 0
+                        && i.src.startsWith('file://')).map(i => i.getAttribute('src')).slice(0,3)""")
+                    for b_ in broken or []:
+                        errors.append(f"kırık görsel: {b_} (dosya yok)")
+                except Exception:
+                    pass
+                # telefon boyutunda yatay taşma + mobil ekran görüntüsü
+                try:
+                    pg.set_viewport_size({"width": 390, "height": 844})
+                    pg.wait_for_timeout(300)
+                    over = pg.evaluate("Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) - window.innerWidth")
+                    if over and over > 8:
+                        errors.append(f"mobilde yatay taşma: içerik ekrandan {int(over)}px taşıyor (390px genişlikte)")
+                    pg.evaluate("window.scrollTo(0,0)")
+                    pg.screenshot(path=os.path.join(workdir, SHOT_MOBILE))
+                    pg.set_viewport_size({"width": 900, "height": 640})
+                    pg.wait_for_timeout(200)
+                except Exception:
+                    pass
                 try:
                     shot = os.path.join(workdir, SHOT_NAME)
                     try:

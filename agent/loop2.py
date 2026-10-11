@@ -9,6 +9,8 @@ import html.parser
 import json
 import os
 import re
+from agent import quality
+from agent.quality import ROUND_THEMES
 import shutil
 import tempfile
 import time
@@ -151,7 +153,7 @@ def _sane(path, c, ws=None):
 
 REPAIR_SCHEMA = {
     "type": "object",
-    "properties": {"files": {"type": "array", "items": {"type": "object", "properties": {
+    "properties": {"notes": {"type": "array", "items": {"type": "string"}}, "files": {"type": "array", "items": {"type": "object", "properties": {
         "path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}}},
     "required": ["files"],
 }
@@ -289,6 +291,15 @@ COVERAGE = {
 }
 CONFIRM_Q = {"key": "onay", "q": "Böyle başlayayım mı?",
              "options": ["Evet, böyle başla", "Evet ama önerilerini çıkar", "Birkaç şeyi değiştirmek istiyorum"]}
+DURATION_Q = {"key": "sure", "q": "Çalışma süresi — uzun çalışmada ilk sürümden sonra durmaz, süre dolana ya da arka arkaya 3 tur hiç hata çıkmayana kadar kalite turları yapar (mobil, erişilebilirlik, içerik, etkileşim, SEO):",
+              "options": ["Normal (hızlı teslim)", "Uzun çalışma: 1 saat", "Uzun çalışma: 2 saat", "Uzun çalışma: 5 saat"]}
+
+
+def _hours_of(answers):
+    m = re.search(r"(\d+)\s*saat", str((answers or {}).get("sure", "")).lower())
+    return int(m.group(1)) if m else 0
+
+
 CONFIRM_INTRO = "Her şeyi doğru anladım mı? Onaylarsan bundan sonra soru sormam; projeyi baştan sona ben götürürüm."
 APPROVE_RE = re.compile(r"^\s*(evet|tamam|ok|okey|olur|başla|basla|aynen|onay|devam|hadi|yap)\b", re.I)
 
@@ -692,10 +703,11 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
 
     def ask_confirm(b):
         emit("brief", text=_brief_text(b), brief=b)
-        emit("ask", questions=[CONFIRM_Q], intro=CONFIRM_INTRO, summary=b.get("title", ""))
+        emit("ask", questions=[CONFIRM_Q, DURATION_Q], intro=CONFIRM_INTRO, summary=b.get("title", ""))
         history.append({"role": "assistant", "content": BRIEF_MARK + json.dumps(b, ensure_ascii=False)})
         return {"ok": True, "waiting": True, "trace": trace, "history": history, "prefs": prefs}
 
+    long_hours = 0
     if not revision:
         if briefs:
             brief = briefs[-1]
@@ -708,7 +720,7 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
             elif not _is_approval(answers, task_text):
                 cikar = str((answers or {}).get("cikar", "")).strip()
                 serbest = " ".join(str(v) for k, v in (answers or {}).items()
-                                   if k not in ("onay", "cikar") and str(v).strip()) if answers else task_text
+                                   if k not in ("onay", "cikar", "sure") and str(v).strip()) if answers else task_text
                 if not answers or (not cikar and (not serbest.strip() or serbest.strip().startswith("Birkaç şeyi"))):
                     items = _brief_items(brief)[:8]
                     emit("ask", questions=[
@@ -727,6 +739,9 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
                 emit("answer", text="Değişikliği özete işledim; artık soru sormadan başlıyorum.")
             else:
                 emit("answer", text="Özet onaylandı — bundan sonra soru yok, projeyi baştan sona ben götürüyorum.")
+            long_hours = _hours_of(answers)
+            if long_hours:
+                emit("answer", text=f"Uzun çalışma modu açık: {long_hours} saat. İlk sürümden sonra kalite turlarına geçeceğim; istediğin an durdurabilirsin.")
         else:
             rnd = len(asks) + 1
             very_detailed = rnd == 1 and _detail_score(orig_req) >= 5 and not questions
@@ -1111,6 +1126,138 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
         _miss = {_n(m) for m in missing}
         checklist = [(x, _n(x) not in _miss) for x in items]
 
+    long_report = []
+    # ---------- 4c. kalite kapısı: statik denetim (kırık link, tanımsız fonksiyon, tekrar id, viewport...) ----------
+    web_files = {q: c for q, c in written.items() if q.endswith((".html", ".css", ".js"))}
+
+    def _apply_fix(fx, label):
+        """Modelin JSON dosya cevabını doğrula, uygula; bozuksa geri al. Değişen dosya listesini döndürür."""
+        changed, backup = [], {}
+        for f2 in (fx.get("files") or []):
+            q, c2 = str(f2.get("path", "")).lstrip("./"), f2.get("content") or ""
+            if q not in written or not c2.strip():
+                continue
+            c2 = _clean_file(q, c2)
+            if _sane(q, c2, ws) or len(c2) < len(written[q]) * 0.5:
+                continue  # bozuk ya da şüpheli derecede kısalmış cevap
+            backup[q] = written[q]
+            written[q] = c2
+            ws.write(q, c2)
+            changed.append(q)
+        if not changed:
+            return []
+        bad = []
+        for q in written:
+            if q.endswith(".html"):
+                pr, sc = _check_html(written[q], [])
+                bad += [x for x in pr if not x.startswith("kullanıcının")] + _check_js(sc, ws) + _runtime(q)
+        if bad:
+            for q, c in backup.items():
+                written[q] = c
+                ws.write(q, c)
+            emit("tool_result", name="edit_file", out=f"{label}: düzeltme testi geçemedi ({bad[0][:120]}), önceki sürüm korundu")
+            return []
+        for q in changed:
+            emit("file", path=q, op="edit")
+        emit("tool_result", name="edit_file", out=f"{label}: " + ", ".join(changed))
+        return changed
+
+    gate_left = []
+    if web_files and not stopped():
+        emit("phase", name="kontrol", text="kalite kapısı: bağlantılar, id'ler, fonksiyonlar, mobil/SEO temelleri")
+        for attempt in range(MAX_REPAIR + 1):
+            aud = quality.audit(web_files)
+            emit("tool", call={"name": "run_command", "args": {"cmd": "site-audit"}})
+            emit("tool_result", name="run_command", out="denetim: " + quality.fmt(aud))
+            gate_left = aud["hard"]
+            if not gate_left or attempt == MAX_REPAIR or stopped():
+                break
+            emit("phase", name="onar", text=f"kalite kapısındaki sorunları gideriyorum ({attempt + 1}/{MAX_REPAIR})")
+            ctx3 = "".join(f"\n--- {q} ---\n{c[:6000]}\n" for q, c in web_files.items())
+            fx = brain.chat(history + [{"role": "user", "content": (
+                "Sitede şu ciddi sorunlar bulundu:\n" + "\n".join(f"- {x}" for x in gate_left)
+                + (("\nAyrıca şunları da iyileştir:\n" + "\n".join(f"- {x}" for x in aud["soft"][:4])) if aud["soft"] else "")
+                + f"\n\nDosyalar:{ctx3}\nHepsini kökten gider (kırık bağlantı → var olan sayfaya ya da #bölüme yönlendir; tanımsız fonksiyon → tanımla). "
+                "SADECE değişen dosyaları TAM içerikleriyle JSON olarak ver: {\"files\":[{\"path\":..., \"content\":...}]}")}],
+                schema=REPAIR_SCHEMA, max_tokens=6000, temperature=0.2, cancel=cancel) or {}
+            if not _apply_fix(fx, "kalite kapısı düzeltmesi"):
+                break
+            web_files = {q: c for q, c in written.items() if q.endswith((".html", ".css", ".js"))}
+        for g in gate_left:
+            emit("error", text="kalite kapısı: " + g[:200])
+
+    # ---------- 4d. uzun çalışma: süre dolana ya da 3 temiz tura kadar kalite turları ----------
+    if long_hours and web_files and not stopped():
+        deadline = time.time() + long_hours * float(os.environ.get("C1_LONG_SCALE", "3600"))
+        clean_streak, rnd_no, improved = 0, 0, []
+
+        def _left():
+            m = max(0, int((deadline - time.time()) // 60))
+            return f"{m // 60} sa {m % 60} dk" if m >= 60 else f"{m} dk"
+
+        emit("answer", text=f"İlk sürüm hazır. Uzun çalışma başlıyor ({long_hours} saat): her turda bir kalite alanını inceleyip düzelteceğim; "
+                            "arka arkaya 3 tur hiçbir sorun çıkmazsa erken bitiririm.")
+        while time.time() < deadline and clean_streak < 3 and not stopped():
+            rnd_no += 1
+            theme_key, theme = ROUND_THEMES[(rnd_no - 1) % len(ROUND_THEMES)]
+            emit("phase", name="uzun", text=f"kalite turu {rnd_no} · {theme_key} · kalan {_left()}")
+            web_files = {q: c for q, c in written.items() if q.endswith((".html", ".css", ".js"))}
+            aud = quality.audit(web_files)
+            rt_issues = []
+            for q in web_files:
+                if q.endswith(".html"):
+                    rt_issues += _runtime(q)
+            issues = aud["hard"] + rt_issues + aud["soft"]
+            ctx3 = "".join(f"\n--- {q} ---\n{c[:7000]}\n" for q, c in web_files.items())
+            try:
+                rv = brain.chat(history + [{"role": "user", "content": (
+                    f"Sen titiz bir kıdemli web geliştiricisisin. Bu turun odağı: {theme}.\n"
+                    + ("Otomatik denetimin bulduğu sorunlar:\n" + "\n".join(f"- {x}" for x in issues[:8]) + "\n" if issues else "Otomatik denetim sorun bulmadı.\n")
+                    + f"Onaylı proje özeti:\n{summary}\n\nDosyalar:{ctx3}\n"
+                    "Önce bu odakta somut, gerçekten değer katan en fazla 3 iyileştirme belirle; özette OLMAYAN yeni özellik ekleme, "
+                    "çalışan hiçbir şeyi bozma. Değişiklik gerekmiyorsa files boş liste olsun. "
+                    "SADECE değişen dosyaları TAM içerikleriyle JSON olarak ver: {\"files\":[{\"path\":..., \"content\":...}], \"notes\":[...]}")}],
+                    schema=REPAIR_SCHEMA, max_tokens=7000, temperature=0.3, cancel=cancel) or {}
+            except Exception as e:
+                emit("tool_result", name="run_command", out=f"tur {rnd_no}: model cevap vermedi ({str(e)[:80]}), 90 sn sonra devam")
+                for _ in range(90):
+                    if stopped() or time.time() >= deadline:
+                        break
+                    time.sleep(1)
+                continue
+            before_rt = dict(written)
+            changed = _apply_fix(rv, f"tur {rnd_no} ({theme_key})") if rv.get("files") else []
+            if changed:
+                aud2 = quality.audit({q: c for q, c in written.items() if q.endswith((".html", ".css", ".js"))})
+                if len(aud2["hard"]) + len(aud2["soft"]) > len(aud["hard"]) + len(aud["soft"]):
+                    for q in changed:
+                        written[q] = before_rt[q]
+                        ws.write(q, before_rt[q])
+                        emit("file", path=q, op="edit")
+                    emit("tool_result", name="run_command", out=f"tur {rnd_no}: denetim puanı geriledi ({quality.fmt(aud2)[:120]}), tur geri alındı")
+                    clean_streak = 0
+                    for _ in range(20):
+                        if stopped() or time.time() >= deadline:
+                            break
+                        time.sleep(1)
+                    continue
+                notes = [str(n) for n in (rv.get("notes") or [])][:3]
+                improved.append(f"tur {rnd_no} ({theme_key}): " + ("; ".join(notes) if notes else ", ".join(changed)))
+                clean_streak = 0
+            else:
+                clean_streak = clean_streak + 1 if not issues else 0
+                emit("tool_result", name="run_command", out=f"tur {rnd_no}: değişiklik gerekmedi" + (f" · temiz tur {clean_streak}/3" if not issues else ""))
+            # ücretsiz kota için nefes; iptal edilebilir
+            for _ in range(20):
+                if stopped() or time.time() >= deadline:
+                    break
+                time.sleep(1)
+        emit("tool_result", name="run_command", out=f"uzun çalışma bitti: {rnd_no} tur, {len(improved)} turda iyileştirme"
+             + (" · 3 temiz tur (erken bitiş)" if clean_streak >= 3 else " · süre doldu" if time.time() >= deadline else " · durduruldu"))
+        if improved:
+            history.append({"role": "assistant", "content": "Uzun çalışma turları:\n" + "\n".join(improved)})
+        long_report = improved
+
     # ---------- 5. raporla ----------
     emit("phase", name="rapor", text="raporluyorum")
     unresolved = [e["text"] for e in trace if e["t"] == "error"]
@@ -1120,6 +1267,7 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
            + ("Doğrulama: " + "; ".join(plan.get("tests") or []) + "\n" if plan.get("tests") else "")
            + ("Özet kontrolü:\n" + "\n".join(("- ✓ " if ok_ else "- ⚠ ") + x for x, ok_ in checklist) + "\n" if checklist else "")
            + ("Çözemediğim: " + "; ".join(u[:160] for u in unresolved) + "\n" if unresolved else "")
+           + ("Uzun çalışma turları:\n" + "\n".join("- " + x[:200] for x in long_report) + "\n" if long_report else "")
            + ("Önizleme sağda açılıyor." if any(p.endswith(".html") for p in written)
               else "Çalıştır: `python3 " + next(iter(written)) + "`" if written else ""))
     emit("answer", text=rep)
