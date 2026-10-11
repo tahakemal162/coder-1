@@ -1182,6 +1182,8 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
                 "SADECE değişen dosyaları TAM içerikleriyle JSON olarak ver: {\"files\":[{\"path\":..., \"content\":...}]}")}],
                 schema=REPAIR_SCHEMA, max_tokens=6000, temperature=0.2, cancel=cancel) or {}
             if not _apply_fix(fx, "kalite kapısı düzeltmesi"):
+                if not (fx.get("files") or []):
+                    emit("tool_result", name="edit_file", out="kalite kapısı: model değişiklik önermedi")
                 break
             web_files = {q: c for q, c in written.items() if q.endswith((".html", ".css", ".js"))}
         for g in gate_left:
