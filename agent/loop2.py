@@ -291,7 +291,7 @@ COVERAGE = {
 }
 CONFIRM_Q = {"key": "onay", "q": "Böyle başlayayım mı?",
              "options": ["Evet, böyle başla", "Evet ama önerilerini çıkar", "Birkaç şeyi değiştirmek istiyorum"]}
-DURATION_Q = {"key": "sure", "q": "Çalışma süresi — uzun çalışmada ilk sürümden sonra durmaz, süre dolana ya da arka arkaya 3 tur hiç hata çıkmayana kadar kalite turları yapar (mobil, erişilebilirlik, içerik, etkileşim, SEO):",
+DURATION_Q = {"key": "sure", "q": "Çalışma süresi? Uzun çalışmada ilk sürümden sonra durmaz; süre dolana ya da 3 tur üst üste hata çıkmayana kadar mobil / erişilebilirlik / içerik / etkileşim / SEO turlarıyla cilalar.",
               "options": ["Normal (hızlı teslim)", "Uzun çalışma: 1 saat", "Uzun çalışma: 2 saat", "Uzun çalışma: 5 saat"]}
 
 
@@ -1170,13 +1170,14 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
             emit("tool", call={"name": "run_command", "args": {"cmd": "site-audit"}})
             emit("tool_result", name="run_command", out="denetim: " + quality.fmt(aud))
             gate_left = aud["hard"]
-            if not gate_left or attempt == MAX_REPAIR or stopped():
+            targets = gate_left or (aud["soft"] if attempt == 0 else [])
+            if not targets or attempt == MAX_REPAIR or stopped():
                 break
-            emit("phase", name="onar", text=f"kalite kapısındaki sorunları gideriyorum ({attempt + 1}/{MAX_REPAIR})")
+            emit("phase", name="onar", text=("kalite kapısındaki sorunları gideriyorum" if gate_left else "kalite iyileştirmelerini uyguluyorum") + f" ({attempt + 1}/{MAX_REPAIR})")
             ctx3 = "".join(f"\n--- {q} ---\n{c[:6000]}\n" for q, c in web_files.items())
             fx = brain.chat(history + [{"role": "user", "content": (
-                "Sitede şu ciddi sorunlar bulundu:\n" + "\n".join(f"- {x}" for x in gate_left)
-                + (("\nAyrıca şunları da iyileştir:\n" + "\n".join(f"- {x}" for x in aud["soft"][:4])) if aud["soft"] else "")
+                ("Sitede şu ciddi sorunlar bulundu:\n" + "\n".join(f"- {x}" for x in gate_left) if gate_left else "Site çalışıyor; kalite denetimi şunları buldu:")
+                + (("\nŞunları da iyileştir (meta description yaz, label/for ekle, alt metni yaz, lang=\"tr\", required/doğrulama):\n" + "\n".join(f"- {x}" for x in aud["soft"][:6])) if aud["soft"] else "")
                 + f"\n\nDosyalar:{ctx3}\nHepsini kökten gider (kırık bağlantı → var olan sayfaya ya da #bölüme yönlendir; tanımsız fonksiyon → tanımla). "
                 "SADECE değişen dosyaları TAM içerikleriyle JSON olarak ver: {\"files\":[{\"path\":..., \"content\":...}]}")}],
                 schema=REPAIR_SCHEMA, max_tokens=6000, temperature=0.2, cancel=cancel) or {}
