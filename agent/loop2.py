@@ -351,6 +351,8 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
         if vals:
             emit("answer", text="Anladım: " + ", ".join(f"**{v[:40]}**" for v in vals)
                  + " — buna göre yapıyorum.")
+    elif asked_before and not revision:
+        emit("answer", text="Anladım: **" + task_text.strip()[:120] + "** — buna göre yapıyorum.")
     elif prefs and not asked_before and not revision and _detail_score(task_text) < 3:
         vals = [str(v).strip()[:30] for v in list(prefs.values())[:4] if str(v).strip()]
         if vals:
@@ -375,8 +377,9 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
             txt = brain.chat(history + [{"role": "user", "content": (
                 f"Kullanıcının değişiklik isteği: {task_text}\n" + (pref_txt + "\n" if pref_txt else "")
                 + f"Mevcut '{path}' dosyası:\n```\n{cur}\n```\n"
-                "SADECE bu isteği uygula, geri kalan her şeyi aynen koru. Dosyanın TAM yeni halini "
-                "tek kod bloğunda ver, açıklama yazma.")}],
+                "SADECE bu isteği uygula, geri kalan her şeyi aynen koru. İstenen her öğe kodda somut "
+                "olarak bulunsun (ör. 'kutucuk' → <input type=\"checkbox\">, 'kırmızı' → gerçek kırmızı renk). "
+                "Dosyanın TAM yeni halini tek kod bloğunda ver, açıklama yazma.")}],
                 max_tokens=1800, temperature=0.2, cancel=cancel)
             new = _code_of(txt)
             if new.strip() and new.strip() != cur.strip():
