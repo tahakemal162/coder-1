@@ -21,7 +21,7 @@ def check_html(path, workdir, max_buttons=12, timeout_ms=15000):
     if not available():
         return None
     from playwright.sync_api import sync_playwright
-    errors, clicked, shot = [], 0, None
+    errors, clicked, shot, inter = [], 0, None, 0
     with _LOCK:
         try:
             with sync_playwright() as p:
@@ -32,7 +32,9 @@ def check_html(path, workdir, max_buttons=12, timeout_ms=15000):
                       if m.type == "error" and "favicon" not in m.text.lower() else None)
                 pg.goto("file://" + os.path.abspath(path), wait_until="load", timeout=timeout_ms)
                 pg.wait_for_timeout(400)
-                btns = pg.query_selector_all("button, input[type=button], input[type=submit], [role=button]")
+                inter = len(pg.query_selector_all(
+                    "button, input, textarea, select, [onclick], [role=button], .btn, a[href^='#'], canvas"))
+                btns = pg.query_selector_all("button, input[type=button], input[type=submit], [role=button], [onclick], .btn, a[href^='#']")
                 for el in btns[:max_buttons]:
                     try:
                         if el.is_visible() and el.is_enabled():
@@ -62,4 +64,4 @@ def check_html(path, workdir, max_buttons=12, timeout_ms=15000):
         if e not in uniq:
             uniq.append(e)
     return {"ok": not [e for e in uniq if not e.startswith("tarayıcı testi")], "errors": uniq[:6],
-            "clicked": clicked, "shot": shot}
+            "clicked": clicked, "shot": shot, "interactive": inter}

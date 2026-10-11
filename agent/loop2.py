@@ -433,10 +433,11 @@ def _make_brief(orig_req, all_answers, prefs, kind, cancel, prev=None, change=""
     def _said(f):
         toks = [t for t in re.findall(r"\w+", f.lower()) if len(t) >= 4]
         return bool(toks) and sum(t[:5] in said for t in toks) >= max(1, len(toks) // 2)
-    extras = [f for f in (b.get("features") or [])
-              if f.lower() not in [u.lower() for u in user_feats] and not _said(f)]
     utoks = set(t for u in user_feats for t in re.findall(r"\w+", u.lower()))
     ustems = {t[:5] for t in utoks if len(t) >= 4}
+    extras = [f for f in (b.get("features") or [])
+              if f.lower() not in [u.lower() for u in user_feats] and not _said(f)
+              and not any(t[:5] in ustems for t in re.findall(r"\w+", f.lower()) if len(t) >= 4)]
     kept = [f for f in (b.get("features") or []) if f not in extras
             and not (len(re.findall(r"\w+", f)) > 1
                      and set(re.findall(r"\w+", f.lower())) <= utoks)
@@ -790,6 +791,10 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
             return []
         if rc["shot"]:
             emit("shot", path=runtime_check.SHOT_NAME)
+        if rc["ok"] and rc.get("interactive", 1) == 0 and kind == "web":
+            rc["ok"] = False
+            rc["errors"].append("sayfada hiç etkileşimli öğe yok (buton / giriş alanı / form) — uygulama işlevsiz; "
+                                "özetteki özellikleri gerçekten çalışan buton ve alanlarla ekle")
         if rc["ok"]:
             emit("tool_result", name="run_command",
                  out=f"tarayıcıda açıldı · {rc['clicked']} buton denendi · çalışma hatası yok")
