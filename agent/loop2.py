@@ -1200,17 +1200,55 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
 
         emit("answer", text=f"İlk sürüm hazır. Uzun çalışma başlıyor ({long_hours} saat): her turda bir kalite alanını inceleyip düzelteceğim; "
                             "arka arkaya 3 tur hiçbir sorun çıkmazsa erken bitiririm.")
+        themes_done = []
+        THEME_SCHEMA = {"type": "object", "properties": {"theme": {"type": "string"}, "reason": {"type": "string"}},
+                        "required": ["theme", "reason"]}
         while time.time() < deadline and clean_streak < 3 and not stopped():
             rnd_no += 1
-            theme_key, theme = ROUND_THEMES[(rnd_no - 1) % len(ROUND_THEMES)]
-            emit("phase", name="uzun", text=f"kalite turu {rnd_no} · {theme_key} · kalan {_left()}")
+            emit("phase", name="uzun", text=f"kalite turu {rnd_no} · inceleme · kalan {_left()}")
             web_files = {q: c for q, c in written.items() if q.endswith((".html", ".css", ".js"))}
             aud = quality.audit(web_files)
             rt_issues = []
             for q in web_files:
                 if q.endswith(".html"):
                     rt_issues += _runtime(q)
-            issues = aud["hard"] + rt_issues + aud["soft"]
+            # görsel inceleme: model ekran görüntülerine gerçekten bakar (telefon + masaüstü)
+            vis_issues = []
+            shots = [os.path.join(workdir, n) for n in (runtime_check.SHOT_MOBILE, runtime_check.SHOT_NAME)
+                     if os.path.exists(os.path.join(workdir, n))]
+            if shots:
+                try:
+                    vv = brain.chat([{"role": "user", "images": shots, "content":
+                        "Sen bir UI/UX denetçisisin. Ekteki görüntüler aynı web sayfasının telefon (390px) ve masaüstü halidir. "
+                        "SADECE gerçekten görünen somut tasarım kusurlarını listele (çakışan/taşan öğeler, okunmayan metin, boş alan, "
+                        "hizasız kartlar, kırık düzen). Görsellerin yüklenmemesi kusur değildir. Kusur yoksa boş liste ver. "
+                        "JSON: {\"issues\":[\"...\"]} (en fazla 4 madde, kısa Türkçe)"}],
+                        schema={"type": "object", "properties": {"issues": {"type": "array", "items": {"type": "string"}}}, "required": ["issues"]},
+                        max_tokens=400, temperature=0.1, cancel=cancel) or {}
+                    vis_issues = ["görsel inceleme: " + str(x)[:160] for x in (vv.get("issues") or [])][:4]
+                except Exception:
+                    vis_issues = []
+            issues = aud["hard"] + rt_issues + vis_issues + aud["soft"]
+            # tur konusunu model seçer: bulgulara ve önceki turlara göre en zayıf alan
+            theme_key, theme = ROUND_THEMES[(rnd_no - 1) % len(ROUND_THEMES)]
+            try:
+                tv = brain.chat([{"role": "user", "content":
+                    "Bir web sitesinin kalite turlarını yönetiyorsun. Konular: " + ", ".join(k for k, _ in ROUND_THEMES) + ".\n"
+                    + ("Önceki turlar: " + ", ".join(themes_done) + "\n" if themes_done else "")
+                    + ("Güncel bulgular:\n" + "\n".join(f"- {x}" for x in issues[:10]) + "\n" if issues else "Güncel bulgu yok.\n")
+                    + "Bu tur için en çok değer katacak TEK konuyu seç (bulgu varsa onu kapsayan konu; yoksa en az işlenen konu). "
+                      "JSON: {\"theme\": konu_anahtari, \"reason\": kısa gerekçe}"}],
+                    schema=THEME_SCHEMA, max_tokens=120, temperature=0.1, cancel=cancel) or {}
+                pick = str(tv.get("theme", "")).strip().lower()
+                for k_, t_ in ROUND_THEMES:
+                    if k_ == pick:
+                        theme_key, theme = k_, t_
+            except Exception:
+                pass
+            themes_done.append(theme_key)
+            emit("phase", name="uzun", text=f"kalite turu {rnd_no} · {theme_key} · kalan {_left()}")
+            if vis_issues:
+                emit("tool_result", name="run_command", out="görsel inceleme: " + " | ".join(x.replace("görsel inceleme: ", "") for x in vis_issues)[:300])
             ctx3 = "".join(f"\n--- {q} ---\n{c[:7000]}\n" for q, c in web_files.items())
             try:
                 rv = brain.chat(history + [{"role": "user", "content": (
@@ -1264,6 +1302,17 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
     # ---------- 5. raporla ----------
     emit("phase", name="rapor", text="raporluyorum")
     unresolved = [e["text"] for e in trace if e["t"] == "error"]
+    _score, _score_note = None, ""
+    _wf = {q: c for q, c in written.items() if q.endswith((".html", ".css", ".js"))}
+    if _wf:
+        try:
+            _a = quality.audit(_wf)
+            _rt = [e for e in unresolved if not e.startswith("kalite kapısı")]
+            _score = max(0, 100 - 15 * len(_a["hard"]) - 4 * len(_a["soft"]) - 10 * len(_rt)
+                         - 5 * sum(1 for _, ok_ in checklist if not ok_))
+            _score_note = "; ".join((_a["hard"] + _a["soft"])[:2])[:120] if _score < 100 else ""
+        except Exception:
+            _score = None
     rep = (("**Hazır.** " if not unresolved else "**Bitti, ama bir uyarı var.** ") + (plan.get("title") or summary) + "\n\n"
            + "Dosyalar: " + ", ".join(f"`{p}`" for p in written) + "\n"
            + "Test edilenler: " + (", ".join(f"`{p}` ✓" for p in tested) if tested else "—") + "\n"
@@ -1271,6 +1320,7 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
            + ("Özet kontrolü:\n" + "\n".join(("- ✓ " if ok_ else "- ⚠ ") + x for x, ok_ in checklist) + "\n" if checklist else "")
            + ("Çözemediğim: " + "; ".join(u[:160] for u in unresolved) + "\n" if unresolved else "")
            + ("Uzun çalışma turları:\n" + "\n".join("- " + x[:200] for x in long_report) + "\n" if long_report else "")
+           + (f"Kalite puanı: **{_score}/100**" + (f" ({_score_note})" if _score_note else "") + "\n" if _score is not None else "")
            + ("Önizleme sağda açılıyor." if any(p.endswith(".html") for p in written)
               else "Çalıştır: `python3 " + next(iter(written)) + "`" if written else ""))
     emit("answer", text=rep)

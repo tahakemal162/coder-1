@@ -87,16 +87,17 @@ def _providers():
 PROVIDERS = _providers()
 _COOL_FILE = os.environ.get("C1_COOL_FILE", os.path.expanduser("~/c1run/brain_cool.json"))
 try:
-    _COOL = {k: float(v) for k, v in json.load(open(_COOL_FILE)).items()}   # id -> yeniden deneme zamanı
+    _COOL = json.load(open(_COOL_FILE))   # id -> yeniden deneme zamanı (+ "_last": son cevap veren model)
+    _LAST = [_COOL.pop("_last", "yerel") or "yerel"]
+    _COOL = {k: float(v) for k, v in _COOL.items()}
 except Exception:
-    _COOL = {}
-_LAST = ["yerel"]
+    _COOL, _LAST = {}, ["yerel"]
 
 
 def _save_cool():
     try:
         os.makedirs(os.path.dirname(_COOL_FILE), exist_ok=True)
-        json.dump(_COOL, open(_COOL_FILE, "w"))
+        json.dump(dict(_COOL, _last=_LAST[0]), open(_COOL_FILE, "w"))
     except Exception:
         pass
 
@@ -111,8 +112,25 @@ def current_label():
     return (live[0] + " (bulut)") if live else BRAIN_MODEL + " (yerel yedek)"
 
 
+def _b64(path):
+    import base64
+    return base64.b64encode(open(path, "rb").read()).decode()
+
+
 def _oai_call(p, messages, max_tokens, temperature, schema, timeout):
-    body = {"model": p["model"], "messages": [{"role": "system", "content": SYSTEM}] + messages,
+    msgs = []
+    for m in messages:
+        if m.get("images"):
+            c = [{"type": "text", "text": m["content"]}]
+            for ip in m["images"]:
+                try:
+                    c.append({"type": "image_url", "image_url": {"url": "data:image/png;base64," + _b64(ip)}})
+                except Exception:
+                    pass
+            msgs.append({"role": m["role"], "content": c})
+        else:
+            msgs.append({"role": m["role"], "content": m["content"]})
+    body = {"model": p["model"], "messages": [{"role": "system", "content": SYSTEM}] + msgs,
             "max_tokens": max(max_tokens, 400), "temperature": temperature}
     if "openrouter" in p["url"]:
         if "nemotron" in p["model"]:
@@ -142,8 +160,15 @@ def _gem_schema(sc, in_props=False):
 
 
 def _gem_call(p, messages, max_tokens, temperature, schema, timeout):
-    contents = [{"role": "model" if m["role"] == "assistant" else "user", "parts": [{"text": m["content"]}]}
-                for m in messages]
+    contents = []
+    for m in messages:
+        parts = [{"text": m["content"]}]
+        for ip in m.get("images") or []:
+            try:
+                parts.append({"inline_data": {"mime_type": "image/png", "data": _b64(ip)}})
+            except Exception:
+                pass
+        contents.append({"role": "model" if m["role"] == "assistant" else "user", "parts": parts})
     body = {"systemInstruction": {"parts": [{"text": SYSTEM}]}, "contents": contents,
             "generationConfig": {"maxOutputTokens": max_tokens, "temperature": temperature}}
     if schema is not None:
@@ -196,10 +221,13 @@ def _cloud(messages, max_tokens, temperature, schema, on_delta, cancel, timeout)
             raise RuntimeError("iptal edildi")
         if _COOL.get(p["id"], 0) > time.time():
             continue
+        if any(m.get("images") for m in messages) and p["kind"] != "gemini":
+            continue  # görsel girdi: yalnızca görsel destekli sağlayıcı (ücretsiz OpenRouter modelleri 404 veriyor)
         try:
             fn = {"gemini": _gem_call, "anthropic": _an_call}.get(p["kind"], _oai_call)
             txt = fn(p, messages, max_tokens, temperature, schema, min(timeout, 240))
             _LAST[0] = p["label"]
+            _save_cool()
             if on_delta:
                 on_delta(txt)
             return txt
@@ -283,7 +311,7 @@ def chat(messages, max_tokens=1200, temperature=0.3, schema=None,
 def _chat(messages, max_tokens, temperature, schema, on_delta, model, cancel, timeout):
     body = {
         "model": model or BRAIN_MODEL,
-        "messages": [{"role": "system", "content": SYSTEM}] + messages,
+        "messages": [{"role": "system", "content": SYSTEM}] + [{"role": m["role"], "content": m["content"]} for m in messages],
         "stream": True,
         "keep_alive": "30m",
         "options": {"temperature": temperature, "num_predict": max_tokens,

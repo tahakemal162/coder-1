@@ -81,6 +81,32 @@ def check_html(path, workdir, max_buttons=12, timeout_ms=15000):
                     over = pg.evaluate("Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) - window.innerWidth")
                     if over and over > 8:
                         errors.append(f"mobilde yatay taşma: içerik ekrandan {int(over)}px taşıyor (390px genişlikte)")
+                    try:
+                        clash = pg.evaluate("""(() => {
+                          const out = []; const W = window.innerWidth;
+                          const vis = el => { const r = el.getBoundingClientRect(); const cs = getComputedStyle(el);
+                            return r.width > 2 && r.height > 2 && cs.visibility !== 'hidden' && cs.display !== 'none' && cs.opacity !== '0'; };
+                          const name = el => (el.tagName.toLowerCase() + (el.id ? '#' + el.id : (typeof el.className === 'string' && el.className.trim()) ? '.' + el.className.trim().split(/\\s+/)[0] : '') + (el.children.length ? '' : ' "' + (el.textContent || '').trim().slice(0, 14) + '"')).slice(0, 48);
+                          const roots = [...document.querySelectorAll('header, nav, .navbar, .header, .topbar')];
+                          const items = [];
+                          for (const r of roots) for (const el of r.querySelectorAll('a, button, img, h1, h2, span, li, .logo'))
+                            if (vis(el) && !items.some(x => x.contains(el) || el.contains(x))) items.push(el);
+                          for (let i = 0; i < items.length && i < 40; i++) {
+                            const a = items[i].getBoundingClientRect();
+                            if (a.right > W + 8) out.push(name(items[i]) + ' ekrandan taşıyor');
+                            for (let j = i + 1; j < items.length && j < 40; j++) {
+                              const b = items[j].getBoundingClientRect();
+                              const ox = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+                              const oy = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+                              if (ox > 6 && oy > 6) out.push(name(items[i]) + ' ile ' + name(items[j]) + ' üst üste biniyor');
+                            }
+                          }
+                          return [...new Set(out)].slice(0, 3);
+                        })()""")
+                        for c_ in clash or []:
+                            errors.append(f"mobilde çakışma (390px, üst menü): {c_}")
+                    except Exception:
+                        pass
                     pg.evaluate("window.scrollTo(0,0)")
                     pg.screenshot(path=os.path.join(workdir, SHOT_MOBILE))
                     pg.set_viewport_size({"width": 900, "height": 640})
