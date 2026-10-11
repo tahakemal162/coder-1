@@ -21,4 +21,6 @@ def set_backend(url):
 
 
 if __name__ == "__main__":
+    if len(sys.argv) < 2 or not sys.argv[1].startswith("https://"):
+        sys.exit("kullanım: edge_backend.py https://<tünel-adresi>  (yalnızca URL yazar)")
     print("edge:", set_backend(sys.argv[1]))
