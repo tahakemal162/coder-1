@@ -33,9 +33,13 @@ def check_html(path, workdir, max_buttons=12, timeout_ms=15000):
                     if u.startswith("file://") and u.rsplit(".", 1)[-1].lower() in ("js", "css", "html"):
                         errors.append("eksik dosya: " + u.rsplit("/", 1)[-1] + " (sayfa çağırıyor ama dosya yok)")
                 pg.on("requestfailed", _reqfail)
-                pg.on("console", lambda m: errors.append("konsol hatası: " + m.text[:200])
-                      if "Failed to load resource" not in m.text else None
-                      if m.type == "error" and "favicon" not in m.text.lower() else None)
+                def _console(m):
+                    if m.type != "error" or "Failed to load resource" in m.text:
+                        return
+                    if not ((m.location or {}).get("url") or "").startswith("file://"):
+                        return  # gömülü harita/video gibi üçüncü taraf iframe mesajları sayılmaz
+                    errors.append("konsol hatası: " + m.text[:200])
+                pg.on("console", _console)
                 pg.goto("file://" + os.path.abspath(path), wait_until="load", timeout=timeout_ms)
                 pg.wait_for_timeout(400)
                 inter = len(pg.query_selector_all(

@@ -352,10 +352,10 @@ def _brief_text(b):
 
 DET_RULES = [
     (r"sakla|localstorage|kalsın|kaydet", r"localStorage|sessionStorage|indexedDB"),
-    (r"mavi", r"blue|#0{0,2}[0-9a-f]{0,2}ff\b|#1e40af|#2563eb|#3b82f6|rgb\(\s*\d+,\s*\d+,\s*2[0-9]{2}"),
+    (r"mavi", r"blue|#0{0,2}[0-9a-f]{0,2}ff\b|#1e40af|#2563eb|#3b82f6|#3498db|#2980b9|#1e88e5|#2196f3|#0d6efd|#007bff|#0ea5e9|#0284c7|#1d4ed8|#1a73e8|rgb\(\s*\d+,\s*\d+,\s*2[0-9]{2}"),
     (r"\bmor\b", r"purple|violet|#7c3aed|#8b5cf6|#a855f7|#6d28d9|#9333ea"),
     (r"yeşil|yesil", r"green|#16a34a|#22c55e|#10b981|#15803d"),
-    (r"kırmızı|kirmizi", r"\bred\b|#dc2626|#ef4444|#b91c1c|crimson"),
+    (r"kırmızı|kirmizi", r"\bred\b|#dc2626|#ef4444|#b91c1c|crimson|#e74c3c|#c0392b|#d32f2f|#f44336|#e53935|#ff0000|#f00\b|#e63946|#d62828|#c62828|rgb\(\s*2[0-9]{2},\s*[0-9]{1,2},\s*[0-9]{1,2}"),
     (r"koyu tema|karanlık|dark", r"#0[0-9a-f]{5}|#1[0-9a-f]{5}|dark|#111|#222"),
     (r"türkçe|turkce", r"[çğışöüÇĞİŞÖÜ]"),
     (r"klavye|kısayol", r"keydown|keyup|keypress"),
