@@ -59,8 +59,14 @@ def _providers():
                     "url": "https://api.anthropic.com/v1/messages", "key": ank, "model": "claude-sonnet-5-5"})
     GM = "https://generativelanguage.googleapis.com/v1beta/models"
     if gmk:
+        out.append({"id": "gm-lite-latest", "label": "Gemini Flash Lite (latest)", "kind": "gemini", "url": GM, "key": gmk,
+                    "model": "gemini-flash-lite-latest"})
+        out.append({"id": "gm-35lite", "label": "Gemini 3.5 Flash Lite", "kind": "gemini", "url": GM, "key": gmk,
+                    "model": "gemini-3.5-flash-lite"})
         out.append({"id": "gm-lite", "label": "Gemini 3.1 Flash Lite", "kind": "gemini", "url": GM, "key": gmk,
                     "model": "gemini-3.1-flash-lite"})
+        out.append({"id": "gm-3flash", "label": "Gemini 3 Flash", "kind": "gemini", "url": GM, "key": gmk,
+                    "model": "gemini-3-flash-preview"})
         out.append({"id": "gm-flash", "label": "Gemini Flash", "kind": "gemini", "url": GM, "key": gmk,
                     "model": "gemini-flash-latest"})
     if ork:
