@@ -339,6 +339,13 @@ function onEvent(ev) {
     case "file":
       openCanvas(); refreshFiles(true);
       break;
+    case "brief": {
+      welcomeGone();
+      const m = addMsg("msg-answer msg-brief", "");
+      const body = m.querySelector(".msg-body");
+      body.innerHTML = mdLite(ev.text || "");
+      break;
+    }
     case "ask":
       addAskCard(ev);
       break;
@@ -357,7 +364,7 @@ function addAskCard(ev) {
   welcomeGone();
   const card = el("div", "msg msg-answer ask-card");
   const body = el("div", "msg-body");
-  body.appendChild(el("p", "ask-intro", "Tam istediğin gibi olsun diye birkaç kısa soru:"));
+  body.appendChild(el("p", "ask-intro", esc(ev.intro || "Tam istediğin gibi olsun diye birkaç kısa soru:")));
   const answers = {};
   (ev.questions || []).forEach((q, qi) => {
     const blk = el("div", "ask-q");
@@ -367,14 +374,22 @@ function addAskCard(ev) {
       const b = el("button", "chip", esc(o));
       b.type = "button";
       b.onclick = () => {
-        answers[q.key || `s${qi + 1}`] = o;
+        const k = q.key || `s${qi + 1}`;
+        if (q.multi) {
+          b.classList.toggle("sel");
+          const sel = [...opts.querySelectorAll(".chip.sel")].map(c => c.textContent);
+          if (sel.length) answers[k] = sel.join(" + "); else delete answers[k];
+          return;
+        }
+        answers[k] = o;
         opts.querySelectorAll(".chip").forEach(c => c.classList.toggle("sel", c === b));
         other.value = "";
+        if (q.key === "onay" && /değiştir/i.test(o)) { other.placeholder = "neyi değiştirelim? yaz…"; other.focus(); }
       };
       opts.appendChild(b);
     });
     const other = el("input", "ask-other");
-    other.placeholder = "başka bir şey yaz…";
+    other.placeholder = (q.options || []).length ? "başka bir şey yaz…" : "buraya yaz…";
     other.oninput = () => {
       if (other.value.trim()) {
         answers[q.key || `s${qi + 1}`] = other.value.trim();
@@ -384,7 +399,7 @@ function addAskCard(ev) {
     blk.appendChild(opts); blk.appendChild(other);
     body.appendChild(blk);
   });
-  const go = el("button", "btn-primary ask-go", "Böyle yap →");
+  const go = el("button", "btn-primary ask-go", ev.questions?.[0]?.key === "onay" ? "Gönder →" : "Böyle yap →");
   go.type = "button";
   go.onclick = () => {
     const keys = Object.keys(answers);
