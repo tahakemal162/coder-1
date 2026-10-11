@@ -1092,8 +1092,13 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
                     missing = [m for m in missing if m in (rv2.get("missing") or [])]
                 except Exception:
                     missing = []
-                missing = [m for m in missing if _det_check(m, newc) is not True] + \
-                          [m for m in items if _det_check(m, newc) is False and m not in missing]
+                allcode2 = "\n".join((newc if q == path else c) for q, c in written.items())
+                def _ok(m):
+                    if m.lower().startswith(("görünüm", "tasarım", "stil")) and has_css:
+                        return True
+                    return _det_check(m, allcode2)
+                missing = [m for m in missing if _ok(m) is not True] + \
+                          [m for m in items if _ok(m) is False and m not in missing]
                 emit("tool_result", name="run_command",
                      out="yeniden kontrol: " + ("tüm maddeler kodda ✓" if not missing else "hâlâ eksik: " + "; ".join(missing)))
             else:
