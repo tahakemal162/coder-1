@@ -436,9 +436,15 @@ def _make_brief(orig_req, all_answers, prefs, kind, cancel, prev=None, change=""
     extras = [f for f in (b.get("features") or [])
               if f.lower() not in [u.lower() for u in user_feats] and not _said(f)]
     utoks = set(t for u in user_feats for t in re.findall(r"\w+", u.lower()))
+    ustems = {t[:5] for t in utoks if len(t) >= 4}
     kept = [f for f in (b.get("features") or []) if f not in extras
             and not (len(re.findall(r"\w+", f)) > 1
-                     and set(re.findall(r"\w+", f.lower())) <= utoks)]
+                     and set(re.findall(r"\w+", f.lower())) <= utoks)
+            and not any(t[:5] in ustems for t in re.findall(r"\w+", f.lower()) if len(t) >= 4)]
+    ftoks = {t[:5] for f in kept + user_feats for t in re.findall(r"\w+", str(f).lower()) if len(t) >= 4}
+    b["out_of_scope"] = [o for o in (b.get("out_of_scope") or [])
+                         if "arayüz" not in str(o).lower() and "tasarım" not in str(o).lower()
+                         and not any(t[:5] in ftoks for t in re.findall(r"\w+", str(o).lower()) if len(t) >= 4)][:3]
     b["features"] = user_feats + [f for f in kept if f.lower() not in [u.lower() for u in user_feats]] \
         + [f + " (önerim)" for f in extras[:2]]
     if not b["features"]:
@@ -647,7 +653,16 @@ def agent_task2(task_text, workdir, on_event=None, cancel=None, sandbox=None,
                 prev_qs = [q for a in asks for q in (a.get("questions") or [])]
                 deep = _discover(orig_req, all_answers, prefs, kind, 2, prev_qs, cancel)
                 known = set(all_answers) | set(prefs) | {"ozellik", "renk", "stil", "veri", "ek", "onay"}
-                deep = [q for q in deep if q.get("key") not in known][:2]
+                prev_txt = " ".join(q.get("q", "") for q in prev_qs).lower() + " " + " ".join(
+                    str(v) for v in all_answers.values()).lower()
+                TOPIC = ("görünüm", "tarz", "renk", "tema", "özellik", "stil", "yenilen", "sakla")
+                def _dup(q):
+                    ql = q.get("q", "").lower()
+                    if any(t in ql and t in prev_txt for t in TOPIC):
+                        return True
+                    return any(str(o).strip().lower() in prev_txt for o in (q.get("options") or [])[:3]
+                               if len(str(o).strip()) > 3)
+                deep = [q for q in deep if q.get("key") not in known and not _dup(q)][:2]
                 questions = deep + [FINAL_Q]
             else:
                 questions = []
